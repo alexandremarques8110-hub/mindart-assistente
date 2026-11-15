@@ -1,8 +1,8 @@
--- Run this once in the Supabase SQL Editor for the MindArt project.
+-- Additive setup for MindArt in the existing Supabase project. Run once.
 -- The app stores a JSON snapshot per signed-in user. RLS prevents users from
 -- reading or changing another user's data.
 
-create table if not exists public.mindart_user_data (
+create table public.mindart_user_data (
   user_id uuid primary key references auth.users (id) on delete cascade,
   payload jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
@@ -10,11 +10,8 @@ create table if not exists public.mindart_user_data (
 
 alter table public.mindart_user_data enable row level security;
 
-revoke all on public.mindart_user_data from anon;
 grant select, insert, update, delete on public.mindart_user_data to authenticated;
 
-drop policy if exists "Users manage their own MindArt data"
-  on public.mindart_user_data;
 create policy "Users manage their own MindArt data"
   on public.mindart_user_data
   for all

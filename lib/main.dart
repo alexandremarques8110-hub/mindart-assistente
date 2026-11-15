@@ -8,6 +8,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
 const supabasePublishableKey =
     String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY');
+const mindArtRedirectUrl =
+    'https://alexandremarques8110-hub.github.io/mindart-assistente/';
 bool get cloudStorageEnabled =>
     supabaseUrl.isNotEmpty && supabasePublishableKey.isNotEmpty;
 
@@ -100,7 +102,11 @@ class _AccountPageState extends State<AccountPage> {
     try {
       final auth = Supabase.instance.client.auth;
       if (_creatingAccount) {
-        final response = await auth.signUp(email: email, password: password);
+        final response = await auth.signUp(
+          email: email,
+          password: password,
+          emailRedirectTo: mindArtRedirectUrl,
+        );
         if (response.session == null && mounted) {
           _message('Confira seu e-mail para confirmar a conta.');
         }
@@ -124,7 +130,10 @@ class _AccountPageState extends State<AccountPage> {
       return;
     }
     try {
-      await Supabase.instance.client.auth.resetPasswordForEmail(email);
+      await Supabase.instance.client.auth.resetPasswordForEmail(
+        email,
+        redirectTo: mindArtRedirectUrl,
+      );
       _message('Se o e-mail estiver cadastrado, você receberá um link.');
     } on AuthException catch (error) {
       _message(error.message);
