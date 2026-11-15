@@ -1,9 +1,26 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-void main() => runApp(const MindArtApp());
+const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+const supabasePublishableKey =
+    String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY');
+bool get cloudStorageEnabled =>
+    supabaseUrl.isNotEmpty && supabasePublishableKey.isNotEmpty;
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (cloudStorageEnabled) {
+    await Supabase.initialize(
+      url: supabaseUrl,
+      publishableKey: supabasePublishableKey,
+    );
+  }
+  runApp(const MindArtApp());
+}
 
 const ink = Color(0xFF182B3A);
 const teal = Color(0xFF167C80);
@@ -31,7 +48,182 @@ class MindArtApp extends StatelessWidget {
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           ),
         ),
-        home: const HomeShell(),
+        home: cloudStorageEnabled ? const AccountGate() : const HomeShell(),
+      );
+}
+
+class AccountGate extends StatelessWidget {
+  const AccountGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final client = Supabase.instance.client;
+    return StreamBuilder<AuthState>(
+      stream: client.auth.onAuthStateChange,
+      builder: (context, snapshot) {
+        final session = snapshot.data?.session ?? client.auth.currentSession;
+        if (session == null) return const AccountPage();
+        return HomeShell(key: ValueKey(session.user.id));
+      },
+    );
+  }
+}
+
+class AccountPage extends StatefulWidget {
+  const AccountPage({super.key});
+
+  @override
+  State<AccountPage> createState() => _AccountPageState();
+}
+
+class _AccountPageState extends State<AccountPage> {
+  final _email = TextEditingController();
+  final _password = TextEditingController();
+  bool _creatingAccount = false;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _email.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final email = _email.text.trim();
+    final password = _password.text;
+    if (email.isEmpty || password.length < 6) {
+      _message('Informe seu e-mail e uma senha com pelo menos 6 caracteres.');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final auth = Supabase.instance.client.auth;
+      if (_creatingAccount) {
+        final response = await auth.signUp(email: email, password: password);
+        if (response.session == null && mounted) {
+          _message('Confira seu e-mail para confirmar a conta.');
+        }
+      } else {
+        await auth.signInWithPassword(email: email, password: password);
+      }
+    } on AuthException catch (error) {
+      _message(error.message);
+    } catch (_) {
+      _message(
+          'Não foi possível conectar. Confira sua internet e tente de novo.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _resetPassword() async {
+    final email = _email.text.trim();
+    if (email.isEmpty) {
+      _message('Digite seu e-mail para receber o link de recuperação.');
+      return;
+    }
+    try {
+      await Supabase.instance.client.auth.resetPasswordForEmail(email);
+      _message('Se o e-mail estiver cadastrado, você receberá um link.');
+    } on AuthException catch (error) {
+      _message(error.message);
+    }
+  }
+
+  void _message(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 440),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Icon(Icons.auto_awesome, color: teal, size: 40),
+                      const SizedBox(height: 12),
+                      Text(
+                        _creatingAccount
+                            ? 'Criar sua conta'
+                            : 'Entrar no MindArt',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            fontSize: 23, fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Acesse seus registros em seus aparelhos.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.black54),
+                      ),
+                      const SizedBox(height: 22),
+                      TextField(
+                        controller: _email,
+                        keyboardType: TextInputType.emailAddress,
+                        autofillHints: const [AutofillHints.email],
+                        decoration: const InputDecoration(
+                          labelText: 'E-mail',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _password,
+                        obscureText: true,
+                        autofillHints: const [AutofillHints.password],
+                        decoration: const InputDecoration(
+                          labelText: 'Senha',
+                          border: OutlineInputBorder(),
+                        ),
+                        onSubmitted: (_) => _busy ? null : _submit(),
+                      ),
+                      if (!_creatingAccount)
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton(
+                            onPressed: _busy ? null : _resetPassword,
+                            child: const Text('Esqueci a senha'),
+                          ),
+                        ),
+                      const SizedBox(height: 8),
+                      FilledButton(
+                        onPressed: _busy ? null : _submit,
+                        child: _busy
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : Text(_creatingAccount ? 'Criar conta' : 'Entrar'),
+                      ),
+                      TextButton(
+                        onPressed: _busy
+                            ? null
+                            : () => setState(
+                                  () => _creatingAccount = !_creatingAccount,
+                                ),
+                        child: Text(_creatingAccount
+                            ? 'Já tenho uma conta'
+                            : 'Criar uma conta nova'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
       );
 }
 
@@ -171,8 +363,9 @@ class _HomeShellState extends State<HomeShell> {
   final debts = <DebtItem>[];
   final savingsGoals = <SavingsGoal>[];
   final projects = <ProjectItem>[];
-
-  static const titles = ['Meu dia', 'Projetos', 'Finanças', 'Rotina'];
+  bool _cloudReady = false;
+  bool _cloudWarningShown = false;
+  RealtimeChannel? _cloudChannel;
 
   @override
   void initState() {
@@ -181,13 +374,41 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Future<void> _loadData() async {
+    Map<String, dynamic>? cloudPayload;
+    var cloudLoadSucceeded = !cloudStorageEnabled;
+    if (cloudStorageEnabled) {
+      try {
+        final user = Supabase.instance.client.auth.currentUser;
+        if (user != null) {
+          final row = await Supabase.instance.client
+              .from('mindart_user_data')
+              .select('payload')
+              .eq('user_id', user.id)
+              .maybeSingle();
+          if (row != null) {
+            cloudPayload = Map<String, dynamic>.from(row['payload'] as Map);
+          }
+        }
+        cloudLoadSucceeded = true;
+      } catch (_) {
+        _cloudWarningShown = true;
+      }
+    }
     try {
-      final savedTasks = await _storage.getString('mindart.tasks');
-      final savedExpenses = await _storage.getString('mindart.expenses');
-      final savedEvents = await _storage.getString('mindart.events');
-      final savedDebts = await _storage.getString('mindart.debts');
-      final savedGoals = await _storage.getString('mindart.savingsGoals');
-      final savedProjects = await _storage.getString('mindart.projects');
+      var savedTasks = await _storage.getString('mindart.tasks');
+      var savedExpenses = await _storage.getString('mindart.expenses');
+      var savedEvents = await _storage.getString('mindart.events');
+      var savedDebts = await _storage.getString('mindart.debts');
+      var savedGoals = await _storage.getString('mindart.savingsGoals');
+      var savedProjects = await _storage.getString('mindart.projects');
+      if (cloudPayload != null) {
+        savedTasks = jsonEncode(cloudPayload['tasks'] ?? []);
+        savedExpenses = jsonEncode(cloudPayload['expenses'] ?? []);
+        savedEvents = jsonEncode(cloudPayload['events'] ?? []);
+        savedDebts = jsonEncode(cloudPayload['debts'] ?? []);
+        savedGoals = jsonEncode(cloudPayload['savingsGoals'] ?? []);
+        savedProjects = jsonEncode(cloudPayload['projects'] ?? []);
+      }
       if (savedTasks != null) {
         tasks
           ..clear()
@@ -259,37 +480,184 @@ class _HomeShellState extends State<HomeShell> {
     await _saveDebts();
     await _saveGoals();
     await _saveProjects();
+    _cloudReady = cloudStorageEnabled && cloudLoadSucceeded;
+    if (_cloudReady && cloudPayload == null) await _saveCloudSnapshot();
+    if (_cloudReady) _listenForCloudChanges();
+    if (cloudStorageEnabled && !cloudLoadSucceeded && mounted) {
+      _message(context,
+          'Sem conexão com a nuvem. Você pode continuar usando os dados deste aparelho.');
+    }
   }
 
-  Future<void> _saveTasks() async => _storage.setString(
-        'mindart.tasks',
-        jsonEncode(tasks.map((task) => task.toJson()).toList()),
-      );
+  void _listenForCloudChanges() {
+    final client = Supabase.instance.client;
+    final user = client.auth.currentUser;
+    if (user == null) return;
+    _cloudChannel = client
+        .channel('mindart-data-${user.id}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'mindart_user_data',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'user_id',
+            value: user.id,
+          ),
+          callback: (payload) {
+            final record = payload.newRecord;
+            final raw = record['payload'];
+            if (raw is Map) _applyCloudSnapshot(Map<String, dynamic>.from(raw));
+          },
+        )
+        .subscribe();
+  }
 
-  Future<void> _saveExpenses() async => _storage.setString(
-        'mindart.expenses',
-        jsonEncode(expenses.map((expense) => expense.toJson()).toList()),
-      );
+  Future<void> _applyCloudSnapshot(Map<String, dynamic> payload) async {
+    try {
+      tasks
+        ..clear()
+        ..addAll(((payload['tasks'] ?? []) as List<dynamic>).map(
+          (item) => TaskItem.fromJson(Map<String, dynamic>.from(item as Map)),
+        ));
+      expenses
+        ..clear()
+        ..addAll(((payload['expenses'] ?? []) as List<dynamic>).map(
+          (item) =>
+              ExpenseItem.fromJson(Map<String, dynamic>.from(item as Map)),
+        ));
+      events
+        ..clear()
+        ..addAll(((payload['events'] ?? []) as List<dynamic>).map(
+          (item) =>
+              RoutineEvent.fromJson(Map<String, dynamic>.from(item as Map)),
+        ));
+      debts
+        ..clear()
+        ..addAll(((payload['debts'] ?? []) as List<dynamic>).map(
+          (item) => DebtItem.fromJson(Map<String, dynamic>.from(item as Map)),
+        ));
+      savingsGoals
+        ..clear()
+        ..addAll(((payload['savingsGoals'] ?? []) as List<dynamic>).map(
+          (item) =>
+              SavingsGoal.fromJson(Map<String, dynamic>.from(item as Map)),
+        ));
+      projects
+        ..clear()
+        ..addAll(((payload['projects'] ?? []) as List<dynamic>).map(
+          (item) =>
+              ProjectItem.fromJson(Map<String, dynamic>.from(item as Map)),
+        ));
+      if (!mounted) return;
+      setState(() {});
+      await _storage.setString('mindart.tasks',
+          jsonEncode(tasks.map((item) => item.toJson()).toList()));
+      await _storage.setString('mindart.expenses',
+          jsonEncode(expenses.map((item) => item.toJson()).toList()));
+      await _storage.setString('mindart.events',
+          jsonEncode(events.map((item) => item.toJson()).toList()));
+      await _storage.setString('mindart.debts',
+          jsonEncode(debts.map((item) => item.toJson()).toList()));
+      await _storage.setString('mindart.savingsGoals',
+          jsonEncode(savingsGoals.map((item) => item.toJson()).toList()));
+      await _storage.setString('mindart.projects',
+          jsonEncode(projects.map((item) => item.toJson()).toList()));
+    } catch (_) {
+      if (mounted && !_cloudWarningShown) {
+        _cloudWarningShown = true;
+        _message(context,
+            'Não consegui atualizar os dados vindos de outro aparelho.');
+      }
+    }
+  }
 
-  Future<void> _saveEvents() async => _storage.setString(
-        'mindart.events',
-        jsonEncode(events.map((event) => event.toJson()).toList()),
-      );
+  @override
+  void dispose() {
+    final channel = _cloudChannel;
+    if (channel != null) {
+      unawaited(Supabase.instance.client.removeChannel(channel));
+    }
+    super.dispose();
+  }
 
-  Future<void> _saveDebts() async => _storage.setString(
-        'mindart.debts',
-        jsonEncode(debts.map((debt) => debt.toJson()).toList()),
-      );
+  Future<void> _saveTasks() async {
+    await _storage.setString(
+      'mindart.tasks',
+      jsonEncode(tasks.map((task) => task.toJson()).toList()),
+    );
+    await _syncCloudIfReady();
+  }
 
-  Future<void> _saveGoals() async => _storage.setString(
-        'mindart.savingsGoals',
-        jsonEncode(savingsGoals.map((goal) => goal.toJson()).toList()),
-      );
+  Future<void> _saveExpenses() async {
+    await _storage.setString(
+      'mindart.expenses',
+      jsonEncode(expenses.map((expense) => expense.toJson()).toList()),
+    );
+    await _syncCloudIfReady();
+  }
 
-  Future<void> _saveProjects() async => _storage.setString(
-        'mindart.projects',
-        jsonEncode(projects.map((project) => project.toJson()).toList()),
+  Future<void> _saveEvents() async {
+    await _storage.setString(
+      'mindart.events',
+      jsonEncode(events.map((event) => event.toJson()).toList()),
+    );
+    await _syncCloudIfReady();
+  }
+
+  Future<void> _saveDebts() async {
+    await _storage.setString(
+      'mindart.debts',
+      jsonEncode(debts.map((debt) => debt.toJson()).toList()),
+    );
+    await _syncCloudIfReady();
+  }
+
+  Future<void> _saveGoals() async {
+    await _storage.setString(
+      'mindart.savingsGoals',
+      jsonEncode(savingsGoals.map((goal) => goal.toJson()).toList()),
+    );
+    await _syncCloudIfReady();
+  }
+
+  Future<void> _saveProjects() async {
+    await _storage.setString(
+      'mindart.projects',
+      jsonEncode(projects.map((project) => project.toJson()).toList()),
+    );
+    await _syncCloudIfReady();
+  }
+
+  Map<String, Object?> _cloudSnapshot() => {
+        'tasks': tasks.map((item) => item.toJson()).toList(),
+        'expenses': expenses.map((item) => item.toJson()).toList(),
+        'events': events.map((item) => item.toJson()).toList(),
+        'debts': debts.map((item) => item.toJson()).toList(),
+        'savingsGoals': savingsGoals.map((item) => item.toJson()).toList(),
+        'projects': projects.map((item) => item.toJson()).toList(),
+      };
+
+  Future<void> _syncCloudIfReady() async {
+    if (_cloudReady) await _saveCloudSnapshot();
+  }
+
+  Future<void> _saveCloudSnapshot() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+    try {
+      await Supabase.instance.client.from('mindart_user_data').upsert(
+        {'user_id': user.id, 'payload': _cloudSnapshot()},
+        onConflict: 'user_id',
       );
+    } catch (_) {
+      if (mounted && !_cloudWarningShown) {
+        _cloudWarningShown = true;
+        _message(context,
+            'Salvei neste aparelho, mas não consegui atualizar a nuvem. Confira sua conexão.');
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -321,8 +689,14 @@ class _HomeShellState extends State<HomeShell> {
                 ),
               ],
             ),
-            actions: const [
-              Padding(
+            actions: [
+              if (cloudStorageEnabled)
+                IconButton(
+                  tooltip: 'Sair da conta',
+                  onPressed: () => Supabase.instance.client.auth.signOut(),
+                  icon: const Icon(Icons.logout),
+                ),
+              const Padding(
                 padding: EdgeInsets.only(right: 20),
                 child: CircleAvatar(
                   backgroundColor: Color(0xFFDCEBE8),
@@ -656,8 +1030,24 @@ class _HomeShellState extends State<HomeShell> {
                   title: Text(expense.title,
                       style: const TextStyle(fontWeight: FontWeight.w700)),
                   subtitle: Text(expense.category),
-                  trailing: Text(_money(expense.value),
-                      style: const TextStyle(fontWeight: FontWeight.w700)),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(_money(expense.value),
+                          style: const TextStyle(fontWeight: FontWeight.w700)),
+                      PopupMenuButton<String>(
+                        tooltip: 'Opções do gasto',
+                        onSelected: (action) async {
+                          if (action == 'edit') await _editExpense(expense);
+                          if (action == 'delete') await _deleteExpense(expense);
+                        },
+                        itemBuilder: (context) => const [
+                          PopupMenuItem(value: 'edit', child: Text('Editar')),
+                          PopupMenuItem(value: 'delete', child: Text('Apagar')),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               )),
         ],
@@ -687,15 +1077,14 @@ class _HomeShellState extends State<HomeShell> {
                         style: const TextStyle(
                             fontWeight: FontWeight.w800, fontSize: 16))),
                 PopupMenuButton<String>(
+                  tooltip: 'Opções da dívida',
                   onSelected: (action) async {
-                    if (action == 'remove') {
-                      setState(() => debts.remove(debt));
-                      await _saveDebts();
-                    }
+                    if (action == 'edit') await _editDebt(debt);
+                    if (action == 'delete') await _deleteDebt(debt);
                   },
                   itemBuilder: (context) => const [
-                    PopupMenuItem(
-                        value: 'remove', child: Text('Remover dívida'))
+                    PopupMenuItem(value: 'edit', child: Text('Editar')),
+                    PopupMenuItem(value: 'delete', child: Text('Apagar')),
                   ],
                 ),
               ]),
@@ -746,14 +1135,14 @@ class _HomeShellState extends State<HomeShell> {
                         style: const TextStyle(
                             fontWeight: FontWeight.w800, fontSize: 16))),
                 PopupMenuButton<String>(
+                  tooltip: 'Opções da meta',
                   onSelected: (action) async {
-                    if (action == 'remove') {
-                      setState(() => savingsGoals.remove(goal));
-                      await _saveGoals();
-                    }
+                    if (action == 'edit') await _editGoal(goal);
+                    if (action == 'delete') await _deleteGoal(goal);
                   },
                   itemBuilder: (context) => const [
-                    PopupMenuItem(value: 'remove', child: Text('Remover meta'))
+                    PopupMenuItem(value: 'edit', child: Text('Editar')),
+                    PopupMenuItem(value: 'delete', child: Text('Apagar')),
                   ],
                 ),
               ]),
@@ -918,9 +1307,8 @@ class _HomeShellState extends State<HomeShell> {
             onSelected: (action) async {
               if (action == 'edit') {
                 await _editTask(task);
-              } else {
-                setState(() => tasks.remove(task));
-                await _saveTasks();
+              } else if (action == 'delete') {
+                await _deleteTask(task);
               }
             },
             itemBuilder: (context) => const [
@@ -935,7 +1323,7 @@ class _HomeShellState extends State<HomeShell> {
                 value: 'delete',
                 child: ListTile(
                   leading: Icon(Icons.delete_outline),
-                  title: Text('Remover'),
+                  title: Text('Apagar'),
                 ),
               ),
             ],
@@ -954,13 +1342,16 @@ class _HomeShellState extends State<HomeShell> {
             style: const TextStyle(fontWeight: FontWeight.w700),
           ),
           subtitle: Text(_eventDate(event.startsAt)),
-          trailing: IconButton(
-            tooltip: 'Remover compromisso',
-            icon: const Icon(Icons.close, size: 19),
-            onPressed: () async {
-              setState(() => events.remove(event));
-              await _saveEvents();
+          trailing: PopupMenuButton<String>(
+            tooltip: 'Opções do compromisso',
+            onSelected: (action) async {
+              if (action == 'edit') await _editEvent(event);
+              if (action == 'delete') await _deleteEvent(event);
             },
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'edit', child: Text('Editar')),
+              PopupMenuItem(value: 'delete', child: Text('Apagar')),
+            ],
           ),
         ),
       );
@@ -1038,26 +1429,7 @@ class _HomeShellState extends State<HomeShell> {
         await _createGoal();
         return;
       }
-      final title = await _textDialog(context, 'Novo gasto', 'Ex.: Almoço');
-      if (title == null || title.trim().isEmpty) return;
-      final amount = await _textDialog(
-        context,
-        'Valor do gasto',
-        'Ex.: 25,90',
-        numeric: true,
-      );
-      if (amount == null) return;
-      final value = double.tryParse(
-        amount.replaceAll('.', '').replaceAll(',', '.'),
-      );
-      if (value == null || value <= 0) {
-        if (context.mounted) _message(context, 'Informe um valor válido.');
-        return;
-      }
-      setState(
-        () => expenses.insert(0, ExpenseItem(title.trim(), 'Outros', value)),
-      );
-      await _saveExpenses();
+      await _editExpense(null);
       return;
     }
     if (selected == 3) {
@@ -1183,24 +1555,274 @@ class _HomeShellState extends State<HomeShell> {
     await _saveTasks();
   }
 
-  Future<void> _createDebt() async {
-    final name =
-        await _textDialog(context, 'Nova dívida', 'Ex.: Cartão de crédito');
-    if (name == null || name.trim().isEmpty) return;
-    final amount = await _askAmount('Valor total da dívida');
-    if (amount == null) return;
-    setState(() => debts.insert(0, DebtItem(name.trim(), amount)));
+  Future<void> _editExpense(ExpenseItem? expense) async {
+    final titleController = TextEditingController(text: expense?.title ?? '');
+    final categoryController =
+        TextEditingController(text: expense?.category ?? 'Outros');
+    final valueController = TextEditingController(
+      text: expense == null ? '' : expense.value.toStringAsFixed(2),
+    );
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(expense == null ? 'Novo gasto' : 'Editar gasto'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: titleController,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Descrição'),
+              ),
+              TextField(
+                controller: categoryController,
+                decoration: const InputDecoration(labelText: 'Categoria'),
+              ),
+              TextField(
+                controller: valueController,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Valor'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar')),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Salvar')),
+        ],
+      ),
+    );
+    final title = titleController.text.trim();
+    final category = categoryController.text.trim();
+    final value = _parseMoney(valueController.text);
+    titleController.dispose();
+    categoryController.dispose();
+    valueController.dispose();
+    if (saved != true) return;
+    if (title.isEmpty || value == null || value <= 0) {
+      _message(context, 'Informe uma descrição e um valor válido.');
+      return;
+    }
+    setState(() {
+      if (expense == null) {
+        expenses.insert(0,
+            ExpenseItem(title, category.isEmpty ? 'Outros' : category, value));
+      } else {
+        expense
+          ..title = title
+          ..category = category.isEmpty ? 'Outros' : category
+          ..value = value;
+      }
+    });
+    await _saveExpenses();
+  }
+
+  Future<void> _editDebt(DebtItem? debt) async {
+    final nameController = TextEditingController(text: debt?.name ?? '');
+    final totalController = TextEditingController(
+      text: debt == null ? '' : debt.total.toStringAsFixed(2),
+    );
+    final paidController = TextEditingController(
+      text: debt == null ? '0,00' : debt.paid.toStringAsFixed(2),
+    );
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(debt == null ? 'Nova dívida' : 'Editar dívida'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Descrição'),
+              ),
+              TextField(
+                controller: totalController,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Valor total'),
+              ),
+              TextField(
+                controller: paidController,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Já pago'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar')),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Salvar')),
+        ],
+      ),
+    );
+    final name = nameController.text.trim();
+    final total = _parseMoney(totalController.text);
+    final paid = _parseMoney(paidController.text);
+    nameController.dispose();
+    totalController.dispose();
+    paidController.dispose();
+    if (saved != true) return;
+    if (name.isEmpty ||
+        total == null ||
+        total <= 0 ||
+        paid == null ||
+        paid < 0 ||
+        paid > total) {
+      _message(context,
+          'Confira os valores: o total deve ser maior que zero e o já pago não pode ultrapassá-lo.');
+      return;
+    }
+    setState(() {
+      if (debt == null) {
+        debts.insert(0, DebtItem(name, total, paid: paid));
+      } else {
+        debt
+          ..name = name
+          ..total = total
+          ..paid = paid;
+      }
+    });
     await _saveDebts();
   }
 
-  Future<void> _createGoal() async {
-    final name =
-        await _textDialog(context, 'Nova meta', 'Ex.: Reserva de emergência');
-    if (name == null || name.trim().isEmpty) return;
-    final amount = await _askAmount('Quanto você quer guardar?');
-    if (amount == null) return;
-    setState(() => savingsGoals.insert(0, SavingsGoal(name.trim(), amount)));
+  Future<void> _editGoal(SavingsGoal? goal) async {
+    final nameController = TextEditingController(text: goal?.name ?? '');
+    final targetController = TextEditingController(
+      text: goal == null ? '' : goal.target.toStringAsFixed(2),
+    );
+    final savedController = TextEditingController(
+      text: goal == null ? '0,00' : goal.saved.toStringAsFixed(2),
+    );
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(goal == null ? 'Nova meta' : 'Editar meta'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Nome da meta'),
+              ),
+              TextField(
+                controller: targetController,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Valor desejado'),
+              ),
+              TextField(
+                controller: savedController,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Já guardado'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar')),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Salvar')),
+        ],
+      ),
+    );
+    final name = nameController.text.trim();
+    final target = _parseMoney(targetController.text);
+    final alreadySaved = _parseMoney(savedController.text);
+    nameController.dispose();
+    targetController.dispose();
+    savedController.dispose();
+    if (saved != true) return;
+    if (name.isEmpty ||
+        target == null ||
+        target <= 0 ||
+        alreadySaved == null ||
+        alreadySaved < 0) {
+      _message(context, 'Informe um nome e valores válidos para a meta.');
+      return;
+    }
+    setState(() {
+      if (goal == null) {
+        savingsGoals.insert(0, SavingsGoal(name, target, saved: alreadySaved));
+      } else {
+        goal
+          ..name = name
+          ..target = target
+          ..saved = alreadySaved;
+      }
+    });
     await _saveGoals();
+  }
+
+  Future<void> _createDebt() => _editDebt(null);
+
+  Future<void> _createGoal() => _editGoal(null);
+
+  Future<bool> _confirmDelete(String name) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Apagar registro?'),
+          content: Text('"$name" será removido permanentemente.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancelar')),
+            FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Apagar')),
+          ],
+        ),
+      ) ??
+      false;
+
+  Future<void> _deleteTask(TaskItem task) async {
+    if (!await _confirmDelete(task.title)) return;
+    setState(() => tasks.remove(task));
+    await _saveTasks();
+  }
+
+  Future<void> _deleteExpense(ExpenseItem expense) async {
+    if (!await _confirmDelete(expense.title)) return;
+    setState(() => expenses.remove(expense));
+    await _saveExpenses();
+  }
+
+  Future<void> _deleteDebt(DebtItem debt) async {
+    if (!await _confirmDelete(debt.name)) return;
+    setState(() => debts.remove(debt));
+    await _saveDebts();
+  }
+
+  Future<void> _deleteGoal(SavingsGoal goal) async {
+    if (!await _confirmDelete(goal.name)) return;
+    setState(() => savingsGoals.remove(goal));
+    await _saveGoals();
+  }
+
+  Future<void> _deleteEvent(RoutineEvent event) async {
+    if (!await _confirmDelete(event.title)) return;
+    setState(() => events.remove(event));
+    await _saveEvents();
   }
 
   Future<void> _addDebtPayment(DebtItem debt) async {
@@ -1234,7 +1856,9 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   double? _parseMoney(String text) => double.tryParse(
-        text.replaceAll('.', '').replaceAll(',', '.').trim(),
+        text.contains(',')
+            ? text.replaceAll('.', '').replaceAll(',', '.').trim()
+            : text.trim(),
       );
 
   Future<void> _editTask(TaskItem? task, {String? projectName}) async {
@@ -1314,15 +1938,19 @@ class _HomeShellState extends State<HomeShell> {
     await _saveTasks();
   }
 
-  Future<void> _addEvent() async {
-    final titleController = TextEditingController();
+  Future<void> _addEvent() => _editEvent(null);
+
+  Future<void> _editEvent(RoutineEvent? event) async {
+    final titleController = TextEditingController(text: event?.title ?? '');
     final now = DateTime.now();
-    var startsAt = DateTime(now.year, now.month, now.day, now.hour + 1);
+    var startsAt =
+        event?.startsAt ?? DateTime(now.year, now.month, now.day, now.hour + 1);
     final saved = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, updateDialog) => AlertDialog(
-          title: const Text('Novo compromisso'),
+          title:
+              Text(event == null ? 'Novo compromisso' : 'Editar compromisso'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -1398,8 +2026,20 @@ class _HomeShellState extends State<HomeShell> {
     );
     final title = titleController.text.trim();
     titleController.dispose();
-    if (saved != true || title.isEmpty) return;
-    setState(() => events.add(RoutineEvent(title, startsAt)));
+    if (saved != true) return;
+    if (title.isEmpty) {
+      _message(context, 'Informe o nome do compromisso.');
+      return;
+    }
+    setState(() {
+      if (event == null) {
+        events.add(RoutineEvent(title, startsAt));
+      } else {
+        event
+          ..title = title
+          ..startsAt = startsAt;
+      }
+    });
     events.sort((a, b) => a.startsAt.compareTo(b.startsAt));
     await _saveEvents();
   }
