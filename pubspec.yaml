@@ -1,0 +1,19 @@
+name: mindart
+description: Assistente pessoal para projetos, finanças e rotina.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  shared_preferences: ^2.5.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
