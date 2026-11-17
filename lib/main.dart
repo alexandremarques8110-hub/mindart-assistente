@@ -578,7 +578,6 @@ class _HomeShellState extends State<HomeShell> {
       // Keep the starter examples if saved data is incomplete or unreadable.
     }
     if (!mounted) return;
-    setState(() => _ready = true);
     await _saveTasks();
     await _saveExpenses();
     await _saveEvents();
@@ -592,6 +591,7 @@ class _HomeShellState extends State<HomeShell> {
       await _syncReminderSchedule();
     }
     _loadingInitialData = false;
+    if (mounted) setState(() => _ready = true);
     if (cloudStorageEnabled && !cloudLoadSucceeded && mounted) {
       _message(context,
           'Sem conexão com a nuvem. Você pode continuar usando os dados deste aparelho.');
