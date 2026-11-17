@@ -55,6 +55,9 @@ flutter build web --release --base-href /mindart-assistente/ `
 ```
 Confirme que `build/web/mindart-push-sw.js` e `build/web/notifications_bridge.js` existem. Copie **todos** os arquivos de `build/web` para `docs/` e faça commit em `main`. O GitHub Pages publica `docs`.
 
+### Publicar sem precisar compilar no notebook
+Depois que as alterações forem revisadas e mescladas em `main`, abra GitHub → **Actions → Publish MindArt to iPhone web → Run workflow**. Selecione `main` e informe apenas a chave **publicável** do Supabase e a chave VAPID **pública**. A automação executa análise, testes, build Flutter e envia os arquivos web para `docs/`, disparando o GitHub Pages. **Não informe chaves privadas, service_role ou senhas.** Essa ação é manual e não executa automaticamente sem as chaves.
+
 ## 5. Teste no iPhone
 1. Abra o site no Safari, instale a PWA e abra pelo ícone MindArt.
 2. Entre na conta Supabase correta.
