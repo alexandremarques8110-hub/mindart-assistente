@@ -23,6 +23,13 @@ bool recoveryLinkOpened = false;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  try {
+    final savedMode = await SharedPreferencesAsync().getString(_themeSettingKey);
+    mindArtTheme.value =
+        savedMode == 'dark' ? ThemeMode.dark : ThemeMode.light;
+  } catch (_) {
+    // Default to the accessible light theme when device storage is unavailable.
+  }
   final incomingUrl = Uri.base;
   recoveryLinkOpened =
       incomingUrl.queryParameters['type'] == 'recovery' ||
@@ -36,33 +43,62 @@ Future<void> main() async {
   runApp(const MindArtApp());
 }
 
-const ink = Color(0xFF182B3A);
 const teal = Color(0xFF167C80);
 const paper = Color(0xFFF5F7F5);
+const _themeSettingKey = 'mindart.ui.theme';
+final ValueNotifier<ThemeMode> mindArtTheme = ValueNotifier(ThemeMode.light);
+
+ThemeData mindArtThemeData(Brightness brightness) {
+  final dark = brightness == Brightness.dark;
+  final scheme = ColorScheme.fromSeed(
+    seedColor: dark ? const Color(0xFF64CBC1) : teal,
+    brightness: brightness,
+  );
+  final surface = dark ? const Color(0xFF101B25) : paper;
+  return ThemeData(
+    useMaterial3: true,
+    colorScheme: scheme,
+    scaffoldBackgroundColor: surface,
+    appBarTheme: AppBarTheme(
+      backgroundColor: surface,
+      foregroundColor: scheme.onSurface,
+    ),
+    cardTheme: CardThemeData(
+      color: dark ? const Color(0xFF1A2A35) : Colors.white,
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    ),
+    navigationBarTheme: NavigationBarThemeData(
+      backgroundColor: surface,
+    ),
+  );
+}
+
+Future<void> setMindArtTheme(ThemeMode mode) async {
+  mindArtTheme.value = mode;
+  try {
+    await SharedPreferencesAsync().setString(
+      _themeSettingKey, mode == ThemeMode.dark ? 'dark' : 'light',
+    );
+  } catch (_) {
+    // A theme preference failing to persist must never block the app.
+  }
+}
 
 class MindArtApp extends StatelessWidget {
   const MindArtApp({super.key});
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-        title: 'MindArt',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          useMaterial3: true,
-          scaffoldBackgroundColor: paper,
-          colorScheme: ColorScheme.fromSeed(seedColor: teal),
-          appBarTheme: const AppBarTheme(
-            backgroundColor: paper,
-            foregroundColor: ink,
-          ),
-          cardTheme: CardThemeData(
-            color: Colors.white,
-            elevation: 0,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          ),
+  Widget build(BuildContext context) => ValueListenableBuilder<ThemeMode>(
+        valueListenable: mindArtTheme,
+        builder: (context, selectedMode, _) => MaterialApp(
+          title: 'MindArt',
+          debugShowCheckedModeBanner: false,
+          theme: mindArtThemeData(Brightness.light),
+          darkTheme: mindArtThemeData(Brightness.dark),
+          themeMode: selectedMode,
+          home: cloudStorageEnabled ? const AccountGate() : const HomeShell(),
         ),
-        home: cloudStorageEnabled ? const AccountGate() : const HomeShell(),
       );
 }
 
@@ -201,7 +237,7 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
                       Text(
                         _saved ? 'Senha alterada!' : 'Definir nova senha',
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.w800,
                         ),
@@ -364,14 +400,14 @@ class _AccountPageState extends State<AccountPage> {
                             ? 'Criar sua conta'
                             : 'Entrar no MindArt',
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 23, fontWeight: FontWeight.w800),
                       ),
                       const SizedBox(height: 8),
-                      const Text(
+                      Text(
                         'Acesse seus registros em seus aparelhos.',
                         textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.black54),
+                        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                       ),
                       const SizedBox(height: 22),
                       TextField(
@@ -435,17 +471,20 @@ class _AccountPageState extends State<AccountPage> {
 }
 
 class TaskItem {
-  TaskItem(this.title, this.project, this.date, {this.done = false});
+  TaskItem(this.title, this.project, this.date,
+      {this.done = false, this.priority = false});
   String title;
   String project;
   String date;
   bool done;
+  bool priority;
 
   Map<String, Object?> toJson() => {
         'title': title,
         'project': project,
         'date': date,
         'done': done,
+        'priority': priority,
       };
 
   factory TaskItem.fromJson(Map<String, dynamic> json) => TaskItem(
@@ -453,7 +492,39 @@ class TaskItem {
         json['project'] as String,
         json['date'] as String,
         done: json['done'] as bool? ?? false,
+        priority: json['priority'] as bool? ?? false,
       );
+}
+
+/// Incomplete starred tasks come first, followed by approaching deadlines.
+/// Older saved tasks without a priority flag remain valid.
+List<TaskItem> rankFocusTasks(Iterable<TaskItem> source, {DateTime? now}) {
+  final reference = now ?? DateTime.now();
+  DateTime? dueDate(String date) {
+    if (date == 'Hoje') {
+      return DateTime(reference.year, reference.month, reference.day);
+    }
+    if (date == 'Amanhã') {
+      return DateTime(reference.year, reference.month, reference.day + 1);
+    }
+    final parts = date.split('/');
+    if (parts.length != 3) return null;
+    return DateTime.tryParse('${parts[2]}-${parts[1]}-${parts[0]}');
+  }
+
+  final pending = source.where((task) => !task.done).toList();
+  pending.sort((a, b) {
+    if (a.priority != b.priority) return a.priority ? -1 : 1;
+    final aDate = dueDate(a.date);
+    final bDate = dueDate(b.date);
+    if (aDate == null && bDate != null) return 1;
+    if (bDate == null && aDate != null) return -1;
+    final dateCompare = aDate == null || bDate == null
+        ? 0
+        : aDate.compareTo(bDate);
+    return dateCompare != 0 ? dateCompare : a.title.compareTo(b.title);
+  });
+  return pending;
 }
 
 class ExpenseItem {
@@ -1226,8 +1297,21 @@ class _HomeShellState extends State<HomeShell> {
               ],
             ),
             actions: [
+              IconButton(
+                tooltip: mindArtTheme.value == ThemeMode.dark
+                    ? 'Ativar tema claro'
+                    : 'Ativar tema escuro',
+                onPressed: () => setMindArtTheme(
+                  mindArtTheme.value == ThemeMode.dark
+                      ? ThemeMode.light
+                      : ThemeMode.dark,
+                ),
+                icon: Icon(mindArtTheme.value == ThemeMode.dark
+                    ? Icons.light_mode_outlined
+                    : Icons.dark_mode_outlined),
+              ),
               PopupMenuButton<String>(
-                tooltip: 'Backup dos dados',
+                tooltip: 'Opções do aplicativo',
                 icon: const Icon(Icons.more_vert),
                 onSelected: (option) {
                   if (option == 'push') {
@@ -1359,30 +1443,68 @@ class _HomeShellState extends State<HomeShell> {
 
   Widget _dashboard() {
     final done = tasks.where((task) => task.done).length;
+    final focus = rankFocusTasks(tasks).take(4).toList();
+    final upcoming = events.where((item) => item.startsAt.isAfter(DateTime.now()))
+        .toList()
+      ..sort((a, b) => a.startsAt.compareTo(b.startsAt));
     return _page(
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             _greeting(),
-            style: const TextStyle(color: teal, fontWeight: FontWeight.w700),
+            style: TextStyle(color: teal, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 5),
-          const Text(
+          Text(
             'Vamos cuidar do que importa.',
             style: TextStyle(
               fontSize: 27,
               fontWeight: FontWeight.w800,
-              color: ink,
+              color: Theme.of(context).colorScheme.onSurface,
             ),
           ),
           const SizedBox(height: 22),
+          _sectionTitle(
+            'Suas prioridades',
+            'Nova tarefa',
+            () => _editTask(null),
+          ),
+          const SizedBox(height: 8),
+          if (focus.isEmpty)
+            _empty('Nenhuma tarefa pendente',
+                'Toque em Nova tarefa e marque o que é prioridade.')
+          else
+            ...focus.map(_taskTile),
+          const SizedBox(height: 12),
+          Text(
+            'Dica: abra as opções de uma tarefa para destacar ou retirar a estrela.',
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 24),
+          _sectionTitle(
+            'Próximos compromissos',
+            'Ver agenda',
+            () => setState(() => selected = 3),
+          ),
+          const SizedBox(height: 10),
+          if (upcoming.isEmpty)
+            _empty('Nenhum compromisso próximo',
+                'Use o botão + para cadastrar um novo compromisso.')
+          else ...[
+            _featuredEvent(upcoming.first),
+            ...upcoming.skip(1).take(2).map(_upcomingEventTile),
+          ],
+          const SizedBox(height: 24),
           Row(
             children: [
               Expanded(
                 child: _metric(
                   'Tarefas concluídas',
-                  '$done/${tasks.length}',
+                  '${done}/${tasks.length}',
                   Icons.check_circle_outline,
                   teal,
                 ),
@@ -1399,17 +1521,6 @@ class _HomeShellState extends State<HomeShell> {
             ],
           ),
           const SizedBox(height: 26),
-          _sectionTitle(
-            'Prioridades',
-            'Ver tarefas',
-            () => setState(() => selected = 1),
-          ),
-          const SizedBox(height: 10),
-          if (tasks.isEmpty)
-            _empty('Tudo em dia por aqui.', 'Adicione uma tarefa para começar.')
-          else
-            ...tasks.take(4).map(_taskTile),
-          const SizedBox(height: 22),
           _sectionTitle('Seu espaço', null, null),
           const SizedBox(height: 10),
           Wrap(
@@ -1440,6 +1551,74 @@ class _HomeShellState extends State<HomeShell> {
       ),
     );
   }
+
+  Widget _featuredEvent(RoutineEvent event) {
+    final colors = Theme.of(context).colorScheme;
+    return Card(
+      color: colors.primaryContainer,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () => setState(() => selected = 3),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Row(
+            children: [
+              Icon(Icons.notifications_active_outlined,
+                  color: colors.onPrimaryContainer, size: 28),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('PRÓXIMO COMPROMISSO',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.7,
+                          color: colors.onPrimaryContainer,
+                        )),
+                    const SizedBox(height: 6),
+                    Text(
+                      event.title,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                        color: colors.onPrimaryContainer,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      _eventDate(event.startsAt),
+                      style: TextStyle(color: colors.onPrimaryContainer),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right, color: colors.onPrimaryContainer),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _upcomingEventTile(RoutineEvent event) => Card(
+        child: ListTile(
+          onTap: () => setState(() => selected = 3),
+          leading: Icon(Icons.event_outlined,
+              color: Theme.of(context).colorScheme.primary),
+          title: Text(
+            event.title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          subtitle: Text(_eventDate(event.startsAt)),
+          trailing: const Icon(Icons.chevron_right),
+        ),
+      );
 
   Widget _projects() => _page(
         Column(
@@ -1496,7 +1675,7 @@ class _HomeShellState extends State<HomeShell> {
               children: [
                 Expanded(
                     child: Text(project.name,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 17, fontWeight: FontWeight.w800))),
                 PopupMenuButton<String>(
                   tooltip: 'Opções',
@@ -1513,10 +1692,10 @@ class _HomeShellState extends State<HomeShell> {
             ),
             if (project.description.isNotEmpty)
               Text(project.description,
-                  style: const TextStyle(color: Colors.black54)),
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
             const SizedBox(height: 6),
             Text('${projectTasks.length} tarefa(s)',
-                style: const TextStyle(
+                style: TextStyle(
                     color: teal, fontSize: 12, fontWeight: FontWeight.w700)),
             if (projectTasks.isNotEmpty) ...[
               const SizedBox(height: 8),
@@ -1574,15 +1753,15 @@ class _HomeShellState extends State<HomeShell> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text('Gastos registrados',
-                      style: TextStyle(color: Colors.black54)),
+                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
                   const SizedBox(height: 6),
                   Text(_money(monthTotal),
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 30,
                           fontWeight: FontWeight.w800,
-                          color: ink)),
+                          color: Theme.of(context).colorScheme.onSurface)),
                   const Text('Total registrado',
-                      style: TextStyle(color: Colors.black54)),
+                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
                 ],
               ),
             ),
@@ -1599,13 +1778,13 @@ class _HomeShellState extends State<HomeShell> {
                       backgroundColor: Color(0xFFE5F1EF),
                       child: Icon(Icons.receipt_long, color: teal)),
                   title: Text(expense.title,
-                      style: const TextStyle(fontWeight: FontWeight.w700)),
+                      style: TextStyle(fontWeight: FontWeight.w700)),
                   subtitle: Text(expense.category),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(_money(expense.value),
-                          style: const TextStyle(fontWeight: FontWeight.w700)),
+                          style: TextStyle(fontWeight: FontWeight.w700)),
                       PopupMenuButton<String>(
                         tooltip: 'Opções do gasto',
                         onSelected: (action) async {
@@ -1645,7 +1824,7 @@ class _HomeShellState extends State<HomeShell> {
               Row(children: [
                 Expanded(
                     child: Text(debt.name,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontWeight: FontWeight.w800, fontSize: 16))),
                 PopupMenuButton<String>(
                   tooltip: 'Opções da dívida',
@@ -1703,7 +1882,7 @@ class _HomeShellState extends State<HomeShell> {
               Row(children: [
                 Expanded(
                     child: Text(goal.name,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontWeight: FontWeight.w800, fontSize: 16))),
                 PopupMenuButton<String>(
                   tooltip: 'Opções da meta',
@@ -1765,14 +1944,14 @@ class _HomeShellState extends State<HomeShell> {
                         children: [
                           Text(
                             _todayLabel(),
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
-                          const Text(
+                          Text(
                             'Sua agenda começa com pequenos passos.',
-                            style: TextStyle(color: Colors.black54),
+                            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                           ),
                         ],
                       ),
@@ -1799,16 +1978,16 @@ class _HomeShellState extends State<HomeShell> {
         children: [
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 27,
               fontWeight: FontWeight.w800,
-              color: ink,
+              color: Theme.of(context).colorScheme.onSurface,
             ),
           ),
           const SizedBox(height: 5),
           Text(
             subtitle,
-            style: const TextStyle(color: Colors.black54, fontSize: 15),
+            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 15),
           ),
         ],
       );
@@ -1824,15 +2003,15 @@ class _HomeShellState extends State<HomeShell> {
               const SizedBox(height: 12),
               Text(
                 value,
-                style: const TextStyle(
+                style: TextStyle(
                   fontWeight: FontWeight.w800,
                   fontSize: 20,
-                  color: ink,
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
               Text(
                 title,
-                style: const TextStyle(color: Colors.black54, fontSize: 12),
+                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
               ),
             ],
           ),
@@ -1845,10 +2024,10 @@ class _HomeShellState extends State<HomeShell> {
           Expanded(
             child: Text(
               title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
-                color: ink,
+                color: Theme.of(context).colorScheme.onSurface,
               ),
             ),
           ),
@@ -1864,12 +2043,26 @@ class _HomeShellState extends State<HomeShell> {
             await _saveTasks();
           },
           controlAffinity: ListTileControlAffinity.leading,
-          title: Text(
-            task.title,
-            style: TextStyle(
-              fontWeight: FontWeight.w700,
-              decoration: task.done ? TextDecoration.lineThrough : null,
-            ),
+          title: Row(
+            children: [
+              if (task.priority)
+                const Padding(
+                  padding: EdgeInsets.only(right: 6),
+                  child: Icon(Icons.star_rounded,
+                      color: Color(0xFFE0A442), size: 21),
+                ),
+              Expanded(
+                child: Text(
+                  task.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontWeight: task.priority ? FontWeight.w800 : FontWeight.w700,
+                    decoration: task.done ? TextDecoration.lineThrough : null,
+                  ),
+                ),
+              ),
+            ],
           ),
           subtitle: Text('${task.project}  ·  ${task.date}'),
           activeColor: teal,
@@ -1880,17 +2073,31 @@ class _HomeShellState extends State<HomeShell> {
                 await _editTask(task);
               } else if (action == 'delete') {
                 await _deleteTask(task);
+              } else if (action == 'priority') {
+                setState(() => task.priority = !task.priority);
+                await _saveTasks();
               }
             },
-            itemBuilder: (context) => const [
+            itemBuilder: (context) => [
               PopupMenuItem(
+                value: 'priority',
+                child: ListTile(
+                  leading: Icon(task.priority
+                      ? Icons.star_outline
+                      : Icons.star_rounded),
+                  title: Text(task.priority
+                      ? 'Remover prioridade'
+                      : 'Destacar prioridade'),
+                ),
+              ),
+              const PopupMenuItem(
                 value: 'edit',
                 child: ListTile(
                   leading: Icon(Icons.edit_outlined),
                   title: Text('Editar'),
                 ),
               ),
-              PopupMenuItem(
+              const PopupMenuItem(
                 value: 'delete',
                 child: ListTile(
                   leading: Icon(Icons.delete_outline),
@@ -1910,7 +2117,7 @@ class _HomeShellState extends State<HomeShell> {
           ),
           title: Text(
             event.title,
-            style: const TextStyle(fontWeight: FontWeight.w700),
+            style: TextStyle(fontWeight: FontWeight.w700),
           ),
           subtitle: Text(_eventDate(event.startsAt)),
           trailing: PopupMenuButton<String>(
@@ -1949,13 +2156,13 @@ class _HomeShellState extends State<HomeShell> {
                       children: [
                         Text(
                           title,
-                          style: const TextStyle(fontWeight: FontWeight.w800),
+                          style: TextStyle(fontWeight: FontWeight.w800),
                         ),
                         Text(
                           sub,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 12,
-                            color: Colors.black54,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ],
@@ -1978,10 +2185,10 @@ class _HomeShellState extends State<HomeShell> {
                 const Icon(Icons.spa_outlined, color: teal, size: 30),
                 const SizedBox(height: 8),
                 Text(title,
-                    style: const TextStyle(fontWeight: FontWeight.w700)),
+                    style: TextStyle(fontWeight: FontWeight.w700)),
                 Text(
                   subtitle,
-                  style: const TextStyle(color: Colors.black54),
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                   textAlign: TextAlign.center,
                 ),
               ],
@@ -2438,6 +2645,7 @@ class _HomeShellState extends State<HomeShell> {
       text: task?.project ?? projectName ?? 'Pessoal',
     );
     var deadline = _parseTaskDate(task?.date) ?? DateTime.now();
+    var priority = task?.priority ?? false;
     final saved = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -2454,6 +2662,12 @@ class _HomeShellState extends State<HomeShell> {
               TextField(
                 controller: projectController,
                 decoration: const InputDecoration(labelText: 'Projeto'),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Marcar como prioridade'),
+                value: priority,
+                onChanged: (value) => updateDialog(() => priority = value),
               ),
               const SizedBox(height: 12),
               Align(
@@ -2497,13 +2711,15 @@ class _HomeShellState extends State<HomeShell> {
       if (task == null) {
         tasks.insert(
           0,
-          TaskItem(title, project.isEmpty ? 'Pessoal' : project, date),
+          TaskItem(title, project.isEmpty ? 'Pessoal' : project, date,
+              priority: priority),
         );
       } else {
         task
           ..title = title
           ..project = project.isEmpty ? 'Pessoal' : project
-          ..date = date;
+          ..date = date
+          ..priority = priority;
       }
     });
     await _saveTasks();
