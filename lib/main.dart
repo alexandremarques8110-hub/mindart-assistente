@@ -796,7 +796,7 @@ class _HomeShellState extends State<HomeShell> {
       }
       final pending = await client.from('mindart_reminders')
           .select('id,item_key')
-          .eq('user_id', _accountId!)
+          .eq('user_id', _accountId)
           .isFilter('sent_at', null);
       for (final record in pending) {
         final key = record['item_key'] as String;
