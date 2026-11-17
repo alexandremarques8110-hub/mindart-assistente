@@ -1,8 +1,5 @@
 name: MindArt quality
 on:
-  push:
-    branches:
-      - codex/mindart-stabilization-20261116
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -28,3 +25,7 @@ jobs:
         run: flutter test
       - name: Compile web
         run: flutter build web --release --base-href /mindart-assistente/
+      - name: Verify PWA Push assets
+        run: |
+          test -f build/web/mindart-push-sw.js
+          test -f build/web/notifications_bridge.js
