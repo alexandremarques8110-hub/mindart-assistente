@@ -2,10 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'notifications_stub.dart'
+    if (dart.library.js_interop) 'notifications_web.dart' as notifications;
 
 const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+const vapidPublicKey = String.fromEnvironment('VAPID_PUBLIC_KEY');
 const supabasePublishableKey =
     String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY');
 const mindArtRedirectUrl =
@@ -365,6 +369,15 @@ class _HomeShellState extends State<HomeShell> {
   int financeSection = 0;
   bool showIdeas = false;
   final _storage = SharedPreferencesAsync();
+  late final String? _accountId = cloudStorageEnabled
+      ? Supabase.instance.client.auth.currentUser?.id
+      : null;
+
+  // Isolated offline cache for each signed-in account.
+  String _storageKey(String field) => _accountId == null
+      ? 'mindart.$field'
+      : 'mindart.user.$_accountId.$field';
+
   bool _ready = false;
   final tasks = <TaskItem>[];
   final expenses = <ExpenseItem>[];
@@ -373,6 +386,7 @@ class _HomeShellState extends State<HomeShell> {
   final savingsGoals = <SavingsGoal>[];
   final projects = <ProjectItem>[];
   bool _cloudReady = false;
+  bool _loadingInitialData = true;
   bool _cloudWarningShown = false;
   RealtimeChannel? _cloudChannel;
 
@@ -404,12 +418,94 @@ class _HomeShellState extends State<HomeShell> {
       }
     }
     try {
-      var savedTasks = await _storage.getString('mindart.tasks');
-      var savedExpenses = await _storage.getString('mindart.expenses');
-      var savedEvents = await _storage.getString('mindart.events');
-      var savedDebts = await _storage.getString('mindart.debts');
-      var savedGoals = await _storage.getString('mindart.savingsGoals');
-      var savedProjects = await _storage.getString('mindart.projects');
+      var savedTasks = await _storage.getString(_storageKey('tasks'));
+      var savedExpenses = await _storage.getString(_storageKey('expenses'));
+      var savedEvents = await _storage.getString(_storageKey('events'));
+      var savedDebts = await _storage.getString(_storageKey('debts'));
+      var savedGoals = await _storage.getString(_storageKey('savingsGoals'));
+      var savedProjects = await _storage.getString(_storageKey('projects'));
+      final dirtyOffline = cloudStorageEnabled &&
+          (await _storage.getBool(_storageKey('dirty')) ?? false);
+      if (dirtyOffline && cloudPayload != null && mounted) {
+        final preferLocal = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Alterações offline encontradas'),
+            content: const Text(
+              'Você alterou registros sem conexão. Deseja manter a versão '
+              'deste aparelho e enviá-la para a nuvem, ou usar a versão '
+              'que já está salva na nuvem?'
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Usar versão da nuvem'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Manter alterações offline'),
+              ),
+            ],
+          ),
+        );
+        if (!mounted) return;
+        if (preferLocal == true) {
+          cloudPayload = null;
+        } else {
+          await _storage.setBool(_storageKey('dirty'), false);
+        }
+      }
+      // Explicit, one-time import for data created before account login.
+      // Legacy data is never automatically assigned to another account.
+      if (_accountId != null &&
+          cloudPayload == null &&
+          [savedTasks, savedExpenses, savedEvents, savedDebts, savedGoals,
+                  savedProjects]
+              .every((value) => value == null)) {
+        final legacyOwner = await _storage.getString('mindart.legacy.owner');
+        if (legacyOwner == null || legacyOwner == _accountId) {
+          final legacy = <String, String?>{};
+          for (final field in const [
+            'tasks', 'expenses', 'events', 'debts', 'savingsGoals', 'projects'
+          ]) {
+            legacy[field] = await _storage.getString('mindart.$field');
+          }
+          if (legacy.values.any((value) => value != null) && mounted) {
+            final consent = await showDialog<bool>(
+              context: context,
+              barrierDismissible: false,
+              builder: (dialogContext) => AlertDialog(
+                title: const Text('Dados antigos encontrados'),
+                content: const Text(
+                  'Este navegador tem registros da versão sem login. '
+                  'Deseja vinculá-los à sua conta atual?'
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('Não importar'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    child: const Text('Importar dados'),
+                  ),
+                ],
+              ),
+            );
+            if (!mounted) return;
+            if (consent == true) {
+              await _storage.setString('mindart.legacy.owner', _accountId);
+              savedTasks = legacy['tasks'];
+              savedExpenses = legacy['expenses'];
+              savedEvents = legacy['events'];
+              savedDebts = legacy['debts'];
+              savedGoals = legacy['savingsGoals'];
+              savedProjects = legacy['projects'];
+            }
+          }
+        }
+      }
       if (cloudPayload != null) {
         savedTasks = jsonEncode(cloudPayload['tasks'] ?? []);
         savedExpenses = jsonEncode(cloudPayload['expenses'] ?? []);
@@ -482,7 +578,6 @@ class _HomeShellState extends State<HomeShell> {
       // Keep the starter examples if saved data is incomplete or unreadable.
     }
     if (!mounted) return;
-    setState(() => _ready = true);
     await _saveTasks();
     await _saveExpenses();
     await _saveEvents();
@@ -491,7 +586,12 @@ class _HomeShellState extends State<HomeShell> {
     await _saveProjects();
     _cloudReady = cloudStorageEnabled && cloudLoadSucceeded;
     if (_cloudReady && cloudPayload == null) await _saveCloudSnapshot();
-    if (_cloudReady) _listenForCloudChanges();
+    if (_cloudReady) {
+      _listenForCloudChanges();
+      await _syncReminderSchedule();
+    }
+    _loadingInitialData = false;
+    if (mounted) setState(() => _ready = true);
     if (cloudStorageEnabled && !cloudLoadSucceeded && mounted) {
       _message(context,
           'Sem conexão com a nuvem. Você pode continuar usando os dados deste aparelho.');
@@ -522,8 +622,15 @@ class _HomeShellState extends State<HomeShell> {
         .subscribe();
   }
 
-  Future<void> _applyCloudSnapshot(Map<String, dynamic> payload) async {
+  Future<void> _applyCloudSnapshot(
+    Map<String, dynamic> payload, {
+    bool replaceOfflineChanges = false,
+  }) async {
     try {
+      if (!replaceOfflineChanges &&
+          (await _storage.getBool(_storageKey('dirty')) ?? false)) {
+        return;
+      }
       tasks
         ..clear()
         ..addAll(((payload['tasks'] ?? []) as List<dynamic>).map(
@@ -560,17 +667,17 @@ class _HomeShellState extends State<HomeShell> {
         ));
       if (!mounted) return;
       setState(() {});
-      await _storage.setString('mindart.tasks',
+      await _storage.setString(_storageKey('tasks'),
           jsonEncode(tasks.map((item) => item.toJson()).toList()));
-      await _storage.setString('mindart.expenses',
+      await _storage.setString(_storageKey('expenses'),
           jsonEncode(expenses.map((item) => item.toJson()).toList()));
-      await _storage.setString('mindart.events',
+      await _storage.setString(_storageKey('events'),
           jsonEncode(events.map((item) => item.toJson()).toList()));
-      await _storage.setString('mindart.debts',
+      await _storage.setString(_storageKey('debts'),
           jsonEncode(debts.map((item) => item.toJson()).toList()));
-      await _storage.setString('mindart.savingsGoals',
+      await _storage.setString(_storageKey('savingsGoals'),
           jsonEncode(savingsGoals.map((item) => item.toJson()).toList()));
-      await _storage.setString('mindart.projects',
+      await _storage.setString(_storageKey('projects'),
           jsonEncode(projects.map((item) => item.toJson()).toList()));
     } catch (_) {
       if (mounted && !_cloudWarningShown) {
@@ -592,7 +699,7 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _saveTasks() async {
     await _storage.setString(
-      'mindart.tasks',
+      _storageKey('tasks'),
       jsonEncode(tasks.map((task) => task.toJson()).toList()),
     );
     await _syncCloudIfReady();
@@ -600,7 +707,7 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _saveExpenses() async {
     await _storage.setString(
-      'mindart.expenses',
+      _storageKey('expenses'),
       jsonEncode(expenses.map((expense) => expense.toJson()).toList()),
     );
     await _syncCloudIfReady();
@@ -608,15 +715,16 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _saveEvents() async {
     await _storage.setString(
-      'mindart.events',
+      _storageKey('events'),
       jsonEncode(events.map((event) => event.toJson()).toList()),
     );
     await _syncCloudIfReady();
+    await _syncReminderSchedule();
   }
 
   Future<void> _saveDebts() async {
     await _storage.setString(
-      'mindart.debts',
+      _storageKey('debts'),
       jsonEncode(debts.map((debt) => debt.toJson()).toList()),
     );
     await _syncCloudIfReady();
@@ -624,7 +732,7 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _saveGoals() async {
     await _storage.setString(
-      'mindart.savingsGoals',
+      _storageKey('savingsGoals'),
       jsonEncode(savingsGoals.map((goal) => goal.toJson()).toList()),
     );
     await _syncCloudIfReady();
@@ -632,7 +740,7 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _saveProjects() async {
     await _storage.setString(
-      'mindart.projects',
+      _storageKey('projects'),
       jsonEncode(projects.map((project) => project.toJson()).toList()),
     );
     await _syncCloudIfReady();
@@ -648,22 +756,247 @@ class _HomeShellState extends State<HomeShell> {
       };
 
   Future<void> _syncCloudIfReady() async {
-    if (_cloudReady) await _saveCloudSnapshot();
+    if (_loadingInitialData) return;
+    if (_cloudReady) {
+      await _saveCloudSnapshot();
+    } else if (cloudStorageEnabled) {
+      await _storage.setBool(_storageKey('dirty'), true);
+    }
   }
 
   Future<void> _saveCloudSnapshot() async {
     final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
+    if (user == null || user.id != _accountId) return;
     try {
       await Supabase.instance.client.from('mindart_user_data').upsert(
         {'user_id': user.id, 'payload': _cloudSnapshot()},
         onConflict: 'user_id',
       );
+      await _storage.setBool(_storageKey('dirty'), false);
     } catch (_) {
+      await _storage.setBool(_storageKey('dirty'), true);
       if (mounted && !_cloudWarningShown) {
         _cloudWarningShown = true;
         _message(context,
             'Salvei neste aparelho, mas não consegui atualizar a nuvem. Confira sua conexão.');
+      }
+    }
+  }
+
+
+
+
+  Future<void> _disableNotifications() async {
+    if (!cloudStorageEnabled || vapidPublicKey.isEmpty) return;
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null || user.id != _accountId) return;
+    try {
+      final endpoint = await notifications.unsubscribeFromWebPush();
+      if (endpoint.isNotEmpty) {
+        await Supabase.instance.client.from('mindart_push_subscriptions')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('endpoint', endpoint);
+      }
+      if (mounted) _message(context, 'Notificações desativadas neste dispositivo.');
+    } catch (_) {
+      if (mounted) {
+        _message(context, 'Não consegui desativar todas as notificações.');
+      }
+    }
+  }
+
+  Future<void> _signOutSafely() async {
+    // Prevent an old account's subscriptions from remaining active
+    // in a browser subsequently used by another account.
+    if (vapidPublicKey.isNotEmpty) {
+      await _disableNotifications();
+    }
+    await Supabase.instance.client.auth.signOut();
+  }
+
+  // User-initiated gesture. Required by Safari for iPhone web push.
+  Future<void> _enableNotifications() async {
+    if (!cloudStorageEnabled || vapidPublicKey.isEmpty) {
+      _message(context,
+          'Notificações aguardam a configuração do servidor (VAPID).');
+      return;
+    }
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null || user.id != _accountId) return;
+    try {
+      final raw = await notifications.subscribeToWebPush(vapidPublicKey);
+      final subscription = Map<String, dynamic>.from(
+          jsonDecode(raw) as Map);
+      final keys = Map<String, dynamic>.from(
+          subscription['keys'] as Map);
+      final endpoint = subscription['endpoint'] as String;
+      if (!endpoint.startsWith('https://')) {
+        throw const FormatException('Endpoint de push inválido');
+      }
+      await Supabase.instance.client.from('mindart_push_subscriptions').upsert({
+        'user_id': user.id,
+        'endpoint': endpoint,
+        'p256dh': keys['p256dh'],
+        'auth': keys['auth'],
+        'timezone': subscription['timezone'] ?? 'UTC',
+      }, onConflict: 'endpoint');
+      await _syncReminderSchedule();
+      if (mounted) {
+        _message(context,
+            'Notificações ativadas para este dispositivo.');
+      }
+    } catch (_) {
+      if (mounted) {
+        _message(context,
+            'Não foi possível ativar. Instale o MindArt na Tela de Início '
+            'do iPhone e confira as permissões e a configuração do servidor.');
+      }
+    }
+  }
+
+  Future<void> _syncReminderSchedule() async {
+    if (!_cloudReady || _accountId == null || vapidPublicKey.isEmpty) return;
+    try {
+      final client = Supabase.instance.client;
+      final now = DateTime.now();
+      final activeKeys = <String>{};
+      for (final event in events) {
+        if (!event.startsAt.isAfter(now)) continue;
+        final key = 'event:${event.title}:${event.startsAt.toIso8601String()}';
+        activeKeys.add(key);
+        final remindAt = event.startsAt.subtract(const Duration(minutes: 15));
+        await client.from('mindart_reminders').upsert({
+          'user_id': _accountId,
+          'item_key': key,
+          'remind_at': remindAt.toUtc().toIso8601String(),
+        }, onConflict: 'user_id,item_key');
+      }
+      final pending = await client.from('mindart_reminders')
+          .select('id,item_key')
+          .eq('user_id', _accountId)
+          .isFilter('sent_at', null);
+      for (final record in pending) {
+        final key = record['item_key'] as String;
+        if (!activeKeys.contains(key)) {
+          await client.from('mindart_reminders')
+              .delete().eq('id', record['id']);
+        }
+      }
+    } catch (_) {
+      // The local agenda remains available when the server is unreachable.
+      if (mounted && !_cloudWarningShown) {
+        _cloudWarningShown = true;
+        _message(context,
+            'Agenda salva, mas os lembretes não foram sincronizados.');
+      }
+    }
+  }
+
+  Future<void> _copyBackup() async {
+    if (!_ready) return;
+    final data = jsonEncode({
+      'format': 'mindart-backup',
+      'version': 1,
+      'exportedAt': DateTime.now().toUtc().toIso8601String(),
+      'data': _cloudSnapshot(),
+    });
+    await Clipboard.setData(ClipboardData(text: data));
+    if (mounted) {
+      _message(context,
+          'Backup copiado. Salve o texto em um arquivo privado e seguro.');
+    }
+  }
+
+  void _validateBackup(Map<String, dynamic> data) {
+    for (final name in const [
+      'tasks', 'expenses', 'events', 'debts', 'savingsGoals', 'projects'
+    ]) {
+      if (data[name] is! List) {
+        throw const FormatException('Backup incompleto.');
+      }
+    }
+    for (final item in (data['tasks'] as List)) {
+      TaskItem.fromJson(Map<String, dynamic>.from(item as Map));
+    }
+    for (final item in (data['expenses'] as List)) {
+      ExpenseItem.fromJson(Map<String, dynamic>.from(item as Map));
+    }
+    for (final item in (data['events'] as List)) {
+      RoutineEvent.fromJson(Map<String, dynamic>.from(item as Map));
+    }
+    for (final item in (data['debts'] as List)) {
+      DebtItem.fromJson(Map<String, dynamic>.from(item as Map));
+    }
+    for (final item in (data['savingsGoals'] as List)) {
+      SavingsGoal.fromJson(Map<String, dynamic>.from(item as Map));
+    }
+    for (final item in (data['projects'] as List)) {
+      ProjectItem.fromJson(Map<String, dynamic>.from(item as Map));
+    }
+  }
+
+  Future<void> _restoreBackup() async {
+    if (!_ready) return;
+    final controller = TextEditingController();
+    final submitted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Restaurar backup'),
+        content: SizedBox(
+          width: 480,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Cole o backup MindArt. A restauração substitui os '
+                'registros deste dispositivo e, quando conectado, da nuvem.'
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                minLines: 4,
+                maxLines: 8,
+                decoration: const InputDecoration(
+                  hintText: 'Cole aqui o backup JSON',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Restaurar e substituir'),
+          ),
+        ],
+      ),
+    );
+    final raw = controller.text;
+    controller.dispose();
+    if (submitted != true) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic> ||
+          decoded['format'] != 'mindart-backup' ||
+          decoded['version'] != 1 ||
+          decoded['data'] is! Map) {
+        throw const FormatException('Formato de backup inválido.');
+      }
+      final data = Map<String, dynamic>.from(decoded['data'] as Map);
+      _validateBackup(data);
+      await _applyCloudSnapshot(data, replaceOfflineChanges: true);
+      if (_cloudReady) await _saveCloudSnapshot();
+      if (mounted) _message(context, 'Backup restaurado neste dispositivo.');
+    } catch (_) {
+      if (mounted) {
+        _message(context,
+            'Backup inválido ou danificado. Nenhum dado foi restaurado.');
       }
     }
   }
@@ -699,10 +1032,45 @@ class _HomeShellState extends State<HomeShell> {
               ],
             ),
             actions: [
+              PopupMenuButton<String>(
+                tooltip: 'Backup dos dados',
+                icon: const Icon(Icons.more_vert),
+                onSelected: (option) {
+                  if (option == 'push') {
+                    _enableNotifications();
+                  } else if (option == 'disable-push') {
+                    _disableNotifications();
+                  } else if (option == 'export') {
+                    _copyBackup();
+                  } else if (option == 'restore') {
+                    _restoreBackup();
+                  }
+                },
+                itemBuilder: (context) => [
+                  if (cloudStorageEnabled)
+                    const PopupMenuItem(
+                      value: 'push',
+                      child: Text('Ativar notificações'),
+                    ),
+                  if (cloudStorageEnabled)
+                    const PopupMenuItem(
+                      value: 'disable-push',
+                      child: Text('Desativar notificações'),
+                    ),
+                  const PopupMenuItem(
+                    value: 'export',
+                    child: Text('Copiar backup'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'restore',
+                    child: Text('Restaurar backup'),
+                  ),
+                ],
+              ),
               if (cloudStorageEnabled)
                 IconButton(
                   tooltip: 'Sair da conta',
-                  onPressed: () => Supabase.instance.client.auth.signOut(),
+                  onPressed: _signOutSafely,
                   icon: const Icon(Icons.logout),
                 ),
               const Padding(

@@ -1,0 +1,45 @@
+name: MindArt quality
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  flutter-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.6'
+          channel: stable
+          cache: true
+      - name: Get dependencies
+        run: flutter pub get
+      - name: Static analysis
+        run: flutter analyze
+      - name: Unit tests
+        run: flutter test
+      - name: Check Web Push JavaScript syntax
+        run: |
+          node --check web/notifications_bridge.js
+          node --check web/mindart-push-sw.js
+      - name: Compile web
+        run: flutter build web --release --base-href /mindart-assistente/
+      - name: Verify PWA Push assets
+        run: |
+          test -f build/web/mindart-push-sw.js
+          test -f build/web/notifications_bridge.js
+
+  edge-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Typecheck reminder Edge Function
+        run: deno check supabase/functions/mindart-dispatch-reminders/index.ts
