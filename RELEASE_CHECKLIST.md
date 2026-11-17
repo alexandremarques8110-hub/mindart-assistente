@@ -17,15 +17,15 @@
 7. Compilar com `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY` e publicar `build/web` em `docs` somente após testes. Não usar `service_role` em código do cliente.
 8. Testar no Safari do iPhone, instalação por Compartilhar → Adicionar à Tela de Início e inicialização no ícone.
 
-## Notificações push (ainda pendentes)
-A versão atual não inclui Push API. Ativar nos Ajustes do iPhone não pode suprir a ausência de implementação. Para liberar:
-- Disponibilizar worker de Push + Notification Click sob o mesmo escopo da PWA, sem interromper o carregamento Flutter.
-- Gerar par de chaves VAPID no backend, expor somente a chave **pública** ao cliente.
-- Armazenar endpoints e chaves da inscrição por conta e por dispositivo, com autenticação e RLS.
-- Implementar um serviço agendado para lembretes que envia push de maneira segura; excluir endpoints expirados.
-- Exibir botão de autorização solicitado por toque do usuário, especialmente em iOS com PWA na Tela de Início.
-- Testar permissão, recebimento em segundo plano, abertura ao tocar e revogação no iPhone.
-- Nunca incluir chaves privadas VAPID, credenciais administrativas ou dados financeiros nas notificações.
+## Notificações push (código na branch; ativação pendente)
+- [x] Service worker e ponte navegador/Flutter, com ativação e desativação pelo menu.
+- [x] Assinaturas e lembretes em tabelas isoladas por usuário, com RLS.
+- [x] Função Edge para envio via VAPID e processamento por cron com segredo.
+- [ ] Executar o SQL revisado, configurar e implantar função e agendamento Supabase.
+- [ ] Gerar VAPID, compilar o Flutter com chaves públicas e publicar os arquivos web.
+- [ ] Testar no iPhone permissão, recebimento em segundo plano, abertura e revogação.
+- [ ] Revisar confiabilidade do cron e observabilidade de envios antes de vender.
+Veja PUSH_SETUP.md. Não incluir segredo VAPID, credenciais administrativas ou dados financeiros nas notificações.
 
 ## Exigências para comercialização
 - Separar ambientes desenvolvimento / homologação / produção e revisar tenant isolation.
