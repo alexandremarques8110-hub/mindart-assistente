@@ -554,7 +554,10 @@ class _HomeShellState extends State<HomeShell> {
     await _saveProjects();
     _cloudReady = cloudStorageEnabled && cloudLoadSucceeded;
     if (_cloudReady && cloudPayload == null) await _saveCloudSnapshot();
-    if (_cloudReady) _listenForCloudChanges();
+    if (_cloudReady) {
+      _listenForCloudChanges();
+      await _syncReminderSchedule();
+    }
     if (cloudStorageEnabled && !cloudLoadSucceeded && mounted) {
       _message(context,
           'Sem conexão com a nuvem. Você pode continuar usando os dados deste aparelho.');
@@ -775,7 +778,7 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Future<void> _syncReminderSchedule() async {
-    if (!_cloudReady || _accountId == null) return;
+    if (!_cloudReady || _accountId == null || vapidPublicKey.isEmpty) return;
     try {
       final client = Supabase.instance.client;
       final now = DateTime.now();
