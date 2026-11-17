@@ -365,6 +365,15 @@ class _HomeShellState extends State<HomeShell> {
   int financeSection = 0;
   bool showIdeas = false;
   final _storage = SharedPreferencesAsync();
+  late final String? _accountId = cloudStorageEnabled
+      ? Supabase.instance.client.auth.currentUser?.id
+      : null;
+
+  // Isolated offline cache for each signed-in account.
+  String _storageKey(String field) => _accountId == null
+      ? 'mindart.$field'
+      : 'mindart.user.$_accountId.$field';
+
   bool _ready = false;
   final tasks = <TaskItem>[];
   final expenses = <ExpenseItem>[];
@@ -404,12 +413,62 @@ class _HomeShellState extends State<HomeShell> {
       }
     }
     try {
-      var savedTasks = await _storage.getString('mindart.tasks');
-      var savedExpenses = await _storage.getString('mindart.expenses');
-      var savedEvents = await _storage.getString('mindart.events');
-      var savedDebts = await _storage.getString('mindart.debts');
-      var savedGoals = await _storage.getString('mindart.savingsGoals');
-      var savedProjects = await _storage.getString('mindart.projects');
+      var savedTasks = await _storage.getString(_storageKey('tasks'));
+      var savedExpenses = await _storage.getString(_storageKey('expenses'));
+      var savedEvents = await _storage.getString(_storageKey('events'));
+      var savedDebts = await _storage.getString(_storageKey('debts'));
+      var savedGoals = await _storage.getString(_storageKey('savingsGoals'));
+      var savedProjects = await _storage.getString(_storageKey('projects'));
+      // Explicit, one-time import for data created before account login.
+      // Legacy data is never automatically assigned to another account.
+      if (_accountId != null &&
+          cloudPayload == null &&
+          [savedTasks, savedExpenses, savedEvents, savedDebts, savedGoals,
+                  savedProjects]
+              .every((value) => value == null)) {
+        final legacyOwner = await _storage.getString('mindart.legacy.owner');
+        if (legacyOwner == null || legacyOwner == _accountId) {
+          final legacy = <String, String?>{};
+          for (final field in const [
+            'tasks', 'expenses', 'events', 'debts', 'savingsGoals', 'projects'
+          ]) {
+            legacy[field] = await _storage.getString('mindart.$field');
+          }
+          if (legacy.values.any((value) => value != null) && mounted) {
+            final consent = await showDialog<bool>(
+              context: context,
+              barrierDismissible: false,
+              builder: (dialogContext) => AlertDialog(
+                title: const Text('Dados antigos encontrados'),
+                content: const Text(
+                  'Este navegador tem registros da versão sem login. '
+                  'Deseja vinculá-los à sua conta atual?'
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('Não importar'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    child: const Text('Importar dados'),
+                  ),
+                ],
+              ),
+            );
+            if (!mounted) return;
+            if (consent == true) {
+              await _storage.setString('mindart.legacy.owner', _accountId!);
+              savedTasks = legacy['tasks'];
+              savedExpenses = legacy['expenses'];
+              savedEvents = legacy['events'];
+              savedDebts = legacy['debts'];
+              savedGoals = legacy['savingsGoals'];
+              savedProjects = legacy['projects'];
+            }
+          }
+        }
+      }
       if (cloudPayload != null) {
         savedTasks = jsonEncode(cloudPayload['tasks'] ?? []);
         savedExpenses = jsonEncode(cloudPayload['expenses'] ?? []);
@@ -560,17 +619,17 @@ class _HomeShellState extends State<HomeShell> {
         ));
       if (!mounted) return;
       setState(() {});
-      await _storage.setString('mindart.tasks',
+      await _storage.setString(_storageKey('tasks'),
           jsonEncode(tasks.map((item) => item.toJson()).toList()));
-      await _storage.setString('mindart.expenses',
+      await _storage.setString(_storageKey('expenses'),
           jsonEncode(expenses.map((item) => item.toJson()).toList()));
-      await _storage.setString('mindart.events',
+      await _storage.setString(_storageKey('events'),
           jsonEncode(events.map((item) => item.toJson()).toList()));
-      await _storage.setString('mindart.debts',
+      await _storage.setString(_storageKey('debts'),
           jsonEncode(debts.map((item) => item.toJson()).toList()));
-      await _storage.setString('mindart.savingsGoals',
+      await _storage.setString(_storageKey('savingsGoals'),
           jsonEncode(savingsGoals.map((item) => item.toJson()).toList()));
-      await _storage.setString('mindart.projects',
+      await _storage.setString(_storageKey('projects'),
           jsonEncode(projects.map((item) => item.toJson()).toList()));
     } catch (_) {
       if (mounted && !_cloudWarningShown) {
@@ -592,7 +651,7 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _saveTasks() async {
     await _storage.setString(
-      'mindart.tasks',
+      _storageKey('tasks'),
       jsonEncode(tasks.map((task) => task.toJson()).toList()),
     );
     await _syncCloudIfReady();
@@ -600,7 +659,7 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _saveExpenses() async {
     await _storage.setString(
-      'mindart.expenses',
+      _storageKey('expenses'),
       jsonEncode(expenses.map((expense) => expense.toJson()).toList()),
     );
     await _syncCloudIfReady();
@@ -608,7 +667,7 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _saveEvents() async {
     await _storage.setString(
-      'mindart.events',
+      _storageKey('events'),
       jsonEncode(events.map((event) => event.toJson()).toList()),
     );
     await _syncCloudIfReady();
@@ -616,7 +675,7 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _saveDebts() async {
     await _storage.setString(
-      'mindart.debts',
+      _storageKey('debts'),
       jsonEncode(debts.map((debt) => debt.toJson()).toList()),
     );
     await _syncCloudIfReady();
@@ -624,7 +683,7 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _saveGoals() async {
     await _storage.setString(
-      'mindart.savingsGoals',
+      _storageKey('savingsGoals'),
       jsonEncode(savingsGoals.map((goal) => goal.toJson()).toList()),
     );
     await _syncCloudIfReady();
@@ -632,7 +691,7 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _saveProjects() async {
     await _storage.setString(
-      'mindart.projects',
+      _storageKey('projects'),
       jsonEncode(projects.map((project) => project.toJson()).toList()),
     );
     await _syncCloudIfReady();
@@ -653,7 +712,7 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _saveCloudSnapshot() async {
     final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
+    if (user == null || user.id != _accountId) return;
     try {
       await Supabase.instance.client.from('mindart_user_data').upsert(
         {'user_id': user.id, 'payload': _cloudSnapshot()},
