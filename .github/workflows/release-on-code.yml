@@ -1,0 +1,55 @@
+name: Release MindArt after recovery fix
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lib/main.dart'
+      - 'test/password_recovery_test.dart'
+      - '.github/workflows/release-on-code.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mindart-web-update
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.6'
+          channel: stable
+          cache: true
+      - name: Analyze, test and build
+        env:
+          SUPABASE_PUBLIC_KEY: 'sb_publishable_LFxN3uDYFCfZuVlmdE-V0Q_ZkGM_kd5'
+          VAPID_PUBLIC_KEY: 'BJbQPOA_nvnLmRbmJGl_SZ8LNIbXvBx5p0pCXdCdrw7uz1or_vzocfW8-9s2a5grArGcmctBb_hJ3PTMg0Eci4E'
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+          flutter build web --release --base-href /mindart-assistente/ \
+            --dart-define=SUPABASE_URL=https://uexogtqyobfuuzserqpp.supabase.co \
+            "--dart-define=SUPABASE_PUBLISHABLE_KEY=$SUPABASE_PUBLIC_KEY" \
+            "--dart-define=VAPID_PUBLIC_KEY=$VAPID_PUBLIC_KEY"
+          test -f build/web/mindart-push-sw.js
+          test -f build/web/notifications_bridge.js
+      - name: Deploy web assets
+        run: |
+          rm -rf docs
+          mkdir -p docs
+          cp -a build/web/. docs/
+          touch docs/.nojekyll
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A docs
+          if ! git diff --cached --quiet; then
+            git commit -m "Build MindArt web with password recovery"
+            git push origin HEAD:main
+          fi
