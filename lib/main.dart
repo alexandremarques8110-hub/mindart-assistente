@@ -17,8 +17,16 @@ const mindArtRedirectUrl =
 bool get cloudStorageEnabled =>
     supabaseUrl.isNotEmpty && supabasePublishableKey.isNotEmpty;
 
+// Capture the email redirect BEFORE Supabase parses and consumes the URL.
+// The default email recovery flow includes a fragment with type=recovery.
+bool recoveryLinkOpened = false;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final incomingUrl = Uri.base;
+  recoveryLinkOpened =
+      incomingUrl.queryParameters['type'] == 'recovery' ||
+      incomingUrl.fragment.contains('type=recovery');
   if (cloudStorageEnabled) {
     await Supabase.initialize(
       url: supabaseUrl,
@@ -58,21 +66,198 @@ class MindArtApp extends StatelessWidget {
       );
 }
 
-class AccountGate extends StatelessWidget {
+class AccountGate extends StatefulWidget {
   const AccountGate({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final client = Supabase.instance.client;
-    return StreamBuilder<AuthState>(
-      stream: client.auth.onAuthStateChange,
-      builder: (context, snapshot) {
-        final session = snapshot.data?.session ?? client.auth.currentSession;
-        if (session == null) return const AccountPage();
-        return HomeShell(key: ValueKey(session.user.id));
+  State<AccountGate> createState() => _AccountGateState();
+}
+
+class _AccountGateState extends State<AccountGate> {
+  late final StreamSubscription<AuthState> _authSubscription;
+  bool _recoveringPassword = recoveryLinkOpened;
+
+  @override
+  void initState() {
+    super.initState();
+    _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen(
+      (state) {
+        if (!mounted) return;
+        setState(() {
+          if (state.event == AuthChangeEvent.passwordRecovery) {
+            _recoveringPassword = true;
+          } else if (state.event == AuthChangeEvent.signedOut) {
+            _recoveringPassword = false;
+          }
+        });
+      },
+      // Token refresh failures must not crash the entire Flutter web app.
+      onError: (Object error, StackTrace stackTrace) {
+        if (mounted) setState(() {});
       },
     );
   }
+
+  void _finishRecovery() {
+    if (mounted) {
+      setState(() {
+        _recoveringPassword = false;
+        recoveryLinkOpened = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _authSubscription.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final session = Supabase.instance.client.auth.currentSession;
+    if (session == null) return const AccountPage();
+    if (_recoveringPassword) {
+      return PasswordRecoveryPage(onComplete: _finishRecovery);
+    }
+    return HomeShell(key: ValueKey(session.user.id));
+  }
+}
+
+class PasswordRecoveryPage extends StatefulWidget {
+  const PasswordRecoveryPage({required this.onComplete, super.key});
+
+  final VoidCallback onComplete;
+
+  @override
+  State<PasswordRecoveryPage> createState() => _PasswordRecoveryPageState();
+}
+
+class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
+  final _password = TextEditingController();
+  final _confirmation = TextEditingController();
+  bool _busy = false;
+  bool _saved = false;
+
+  @override
+  void dispose() {
+    _password.dispose();
+    _confirmation.dispose();
+    super.dispose();
+  }
+
+  void _message(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<void> _savePassword() async {
+    if (_busy) return;
+    final password = _password.text;
+    if (password.length < 8) {
+      _message('Use uma senha com pelo menos 8 caracteres.');
+      return;
+    }
+    if (password != _confirmation.text) {
+      _message('As senhas digitadas são diferentes.');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await Supabase.instance.client.auth.updateUser(
+        UserAttributes(password: password),
+      );
+      if (!mounted) return;
+      _password.clear();
+      _confirmation.clear();
+      setState(() => _saved = true);
+    } on AuthException catch (error) {
+      _message('Não foi possível salvar a senha: ${error.message}');
+    } catch (_) {
+      _message('Falha de conexão. Tente novamente.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Icon(Icons.lock_reset, color: teal, size: 44),
+                      const SizedBox(height: 14),
+                      Text(
+                        _saved ? 'Senha alterada!' : 'Definir nova senha',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      if (_saved) ...[
+                        const Text(
+                          'A nova senha foi salva. Você já pode acessar seus dados.',
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 18),
+                        FilledButton(
+                          onPressed: widget.onComplete,
+                          child: const Text('Abrir MindArt'),
+                        ),
+                      ] else ...[
+                        const Text(
+                          'Escolha uma senha nova com pelo menos 8 caracteres.',
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: _password,
+                          obscureText: true,
+                          autofillHints: const [AutofillHints.newPassword],
+                          decoration: const InputDecoration(
+                            labelText: 'Nova senha',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _confirmation,
+                          obscureText: true,
+                          autofillHints: const [AutofillHints.newPassword],
+                          decoration: const InputDecoration(
+                            labelText: 'Confirmar nova senha',
+                            border: OutlineInputBorder(),
+                          ),
+                          onSubmitted: (_) {
+                            if (!_busy) _savePassword();
+                          },
+                        ),
+                        const SizedBox(height: 18),
+                        FilledButton(
+                          onPressed: _busy ? null : _savePassword,
+                          child: Text(_busy ? 'Salvando...' : 'Salvar nova senha'),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
 }
 
 class AccountPage extends StatefulWidget {
@@ -128,19 +313,28 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   Future<void> _resetPassword() async {
+    if (_busy) return;
     final email = _email.text.trim();
     if (email.isEmpty) {
       _message('Digite seu e-mail para receber o link de recuperação.');
       return;
     }
+    setState(() => _busy = true);
     try {
       await Supabase.instance.client.auth.resetPasswordForEmail(
         email,
         redirectTo: mindArtRedirectUrl,
       );
-      _message('Se o e-mail estiver cadastrado, você receberá um link.');
+      _message(
+        'Se o endereço estiver cadastrado e autorizado a receber e-mails, '
+        'você receberá um link. Verifique também a pasta Spam.',
+      );
     } on AuthException catch (error) {
-      _message(error.message);
+      _message('Falha ao solicitar o link: ${error.message}');
+    } catch (_) {
+      _message('Não foi possível solicitar o link. Verifique sua conexão.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
