@@ -5,8 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'notifications_stub.dart'
+    if (dart.library.js_interop) 'notifications_web.dart' as notifications;
 
 const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+const vapidPublicKey = String.fromEnvironment('VAPID_PUBLIC_KEY');
 const supabasePublishableKey =
     String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY');
 const mindArtRedirectUrl =
@@ -672,6 +675,7 @@ class _HomeShellState extends State<HomeShell> {
       jsonEncode(events.map((event) => event.toJson()).toList()),
     );
     await _syncCloudIfReady();
+    await _syncReminderSchedule();
   }
 
   Future<void> _saveDebts() async {
@@ -728,6 +732,85 @@ class _HomeShellState extends State<HomeShell> {
     }
   }
 
+
+
+  // User-initiated gesture. Required by Safari for iPhone web push.
+  Future<void> _enableNotifications() async {
+    if (!cloudStorageEnabled || vapidPublicKey.isEmpty) {
+      _message(context,
+          'Notificações aguardam a configuração do servidor (VAPID).');
+      return;
+    }
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null || user.id != _accountId) return;
+    try {
+      final raw = await notifications.subscribeToWebPush(vapidPublicKey);
+      final subscription = Map<String, dynamic>.from(
+          jsonDecode(raw) as Map);
+      final keys = Map<String, dynamic>.from(
+          subscription['keys'] as Map);
+      final endpoint = subscription['endpoint'] as String;
+      if (!endpoint.startsWith('https://')) {
+        throw const FormatException('Endpoint de push inválido');
+      }
+      await Supabase.instance.client.from('mindart_push_subscriptions').upsert({
+        'user_id': user.id,
+        'endpoint': endpoint,
+        'p256dh': keys['p256dh'],
+        'auth': keys['auth'],
+        'timezone': subscription['timezone'] ?? 'UTC',
+      }, onConflict: 'endpoint');
+      await _syncReminderSchedule();
+      if (mounted) {
+        _message(context,
+            'Notificações ativadas para este dispositivo.');
+      }
+    } catch (_) {
+      if (mounted) {
+        _message(context,
+            'Não foi possível ativar. Instale o MindArt na Tela de Início '
+            'do iPhone e confira as permissões e a configuração do servidor.');
+      }
+    }
+  }
+
+  Future<void> _syncReminderSchedule() async {
+    if (!_cloudReady || _accountId == null) return;
+    try {
+      final client = Supabase.instance.client;
+      final now = DateTime.now();
+      final activeKeys = <String>{};
+      for (final event in events) {
+        if (!event.startsAt.isAfter(now)) continue;
+        final key = 'event:${event.title}:${event.startsAt.toIso8601String()}';
+        activeKeys.add(key);
+        final remindAt = event.startsAt.subtract(const Duration(minutes: 15));
+        await client.from('mindart_reminders').upsert({
+          'user_id': _accountId,
+          'item_key': key,
+          'remind_at': remindAt.toUtc().toIso8601String(),
+        }, onConflict: 'user_id,item_key');
+      }
+      final pending = await client.from('mindart_reminders')
+          .select('id,item_key')
+          .eq('user_id', _accountId!)
+          .isFilter('sent_at', null);
+      for (final record in pending) {
+        final key = record['item_key'] as String;
+        if (!activeKeys.contains(key)) {
+          await client.from('mindart_reminders')
+              .delete().eq('id', record['id']);
+        }
+      }
+    } catch (_) {
+      // The local agenda remains available when the server is unreachable.
+      if (mounted && !_cloudWarningShown) {
+        _cloudWarningShown = true;
+        _message(context,
+            'Agenda salva, mas os lembretes não foram sincronizados.');
+      }
+    }
+  }
 
   Future<void> _copyBackup() async {
     if (!_ready) return;
@@ -872,18 +955,25 @@ class _HomeShellState extends State<HomeShell> {
                 tooltip: 'Backup dos dados',
                 icon: const Icon(Icons.more_vert),
                 onSelected: (option) {
-                  if (option == 'export') {
+                  if (option == 'push') {
+                    _enableNotifications();
+                  } else if (option == 'export') {
                     _copyBackup();
                   } else if (option == 'restore') {
                     _restoreBackup();
                   }
                 },
-                itemBuilder: (context) => const [
-                  PopupMenuItem(
+                itemBuilder: (context) => [
+                  if (cloudStorageEnabled)
+                    const PopupMenuItem(
+                      value: 'push',
+                      child: Text('Ativar notificações'),
+                    ),
+                  const PopupMenuItem(
                     value: 'export',
                     child: Text('Copiar backup'),
                   ),
-                  PopupMenuItem(
+                  const PopupMenuItem(
                     value: 'restore',
                     child: Text('Restaurar backup'),
                   ),
