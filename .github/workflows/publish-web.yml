@@ -1,0 +1,72 @@
+name: Publish MindArt to iPhone web
+
+on:
+  workflow_dispatch:
+    inputs:
+      supabase_publishable_key:
+        description: 'Supabase publishable/anon public key (never service_role/secret)'
+        required: true
+        type: string
+      vapid_public_key:
+        description: 'Web Push public VAPID key (never private key)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mindart-pages-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.6'
+          channel: stable
+          cache: true
+      - name: Reject secrets and empty inputs
+        env:
+          PUBLIC_KEY: ${{ inputs.supabase_publishable_key }}
+          VAPID_KEY: ${{ inputs.vapid_public_key }}
+        run: |
+          test -n "$PUBLIC_KEY" && test -n "$VAPID_KEY"
+          case "$PUBLIC_KEY" in
+            sb_secret_*|*service_role*) echo "A secret key cannot be published"; exit 1;;
+          esac
+      - name: Check and build
+        env:
+          PUBLIC_KEY: ${{ inputs.supabase_publishable_key }}
+          VAPID_KEY: ${{ inputs.vapid_public_key }}
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+          flutter build web --release --base-href /mindart-assistente/ \
+            --dart-define=SUPABASE_URL=https://uexogtqyobfuuzserqpp.supabase.co \
+            "--dart-define=SUPABASE_PUBLISHABLE_KEY=$PUBLIC_KEY" \
+            "--dart-define=VAPID_PUBLIC_KEY=$VAPID_KEY"
+          test -f build/web/mindart-push-sw.js
+          test -f build/web/notifications_bridge.js
+      - name: Publish compiled files to docs
+        run: |
+          rm -rf docs
+          mkdir -p docs
+          cp -a build/web/. docs/
+          touch docs/.nojekyll
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A docs
+          if git diff --cached --quiet; then
+            echo "No changes to publish"
+          else
+            git commit -m "Release MindArt web with cloud and push support"
+            git push origin HEAD:main
+          fi
