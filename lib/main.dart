@@ -459,7 +459,7 @@ class _HomeShellState extends State<HomeShell> {
             );
             if (!mounted) return;
             if (consent == true) {
-              await _storage.setString('mindart.legacy.owner', _accountId!);
+              await _storage.setString('mindart.legacy.owner', _accountId);
               savedTasks = legacy['tasks'];
               savedExpenses = legacy['expenses'];
               savedEvents = legacy['events'];
