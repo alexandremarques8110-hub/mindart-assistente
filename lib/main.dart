@@ -1752,7 +1752,7 @@ class _HomeShellState extends State<HomeShell> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Gastos registrados',
+                  Text('Gastos registrados',
                       style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
                   const SizedBox(height: 6),
                   Text(_money(monthTotal),
@@ -1760,7 +1760,7 @@ class _HomeShellState extends State<HomeShell> {
                           fontSize: 30,
                           fontWeight: FontWeight.w800,
                           color: Theme.of(context).colorScheme.onSurface)),
-                  const Text('Total registrado',
+                  Text('Total registrado',
                       style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
                 ],
               ),
