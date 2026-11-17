@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -727,6 +728,115 @@ class _HomeShellState extends State<HomeShell> {
     }
   }
 
+
+  Future<void> _copyBackup() async {
+    if (!_ready) return;
+    final data = jsonEncode({
+      'format': 'mindart-backup',
+      'version': 1,
+      'exportedAt': DateTime.now().toUtc().toIso8601String(),
+      'data': _cloudSnapshot(),
+    });
+    await Clipboard.setData(ClipboardData(text: data));
+    if (mounted) {
+      _message(context,
+          'Backup copiado. Salve o texto em um arquivo privado e seguro.');
+    }
+  }
+
+  void _validateBackup(Map<String, dynamic> data) {
+    for (final name in const [
+      'tasks', 'expenses', 'events', 'debts', 'savingsGoals', 'projects'
+    ]) {
+      if (data[name] is! List) {
+        throw const FormatException('Backup incompleto.');
+      }
+    }
+    for (final item in (data['tasks'] as List)) {
+      TaskItem.fromJson(Map<String, dynamic>.from(item as Map));
+    }
+    for (final item in (data['expenses'] as List)) {
+      ExpenseItem.fromJson(Map<String, dynamic>.from(item as Map));
+    }
+    for (final item in (data['events'] as List)) {
+      RoutineEvent.fromJson(Map<String, dynamic>.from(item as Map));
+    }
+    for (final item in (data['debts'] as List)) {
+      DebtItem.fromJson(Map<String, dynamic>.from(item as Map));
+    }
+    for (final item in (data['savingsGoals'] as List)) {
+      SavingsGoal.fromJson(Map<String, dynamic>.from(item as Map));
+    }
+    for (final item in (data['projects'] as List)) {
+      ProjectItem.fromJson(Map<String, dynamic>.from(item as Map));
+    }
+  }
+
+  Future<void> _restoreBackup() async {
+    if (!_ready) return;
+    final controller = TextEditingController();
+    final submitted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Restaurar backup'),
+        content: SizedBox(
+          width: 480,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Cole o backup MindArt. A restauração substitui os '
+                'registros deste dispositivo e, quando conectado, da nuvem.'
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                minLines: 4,
+                maxLines: 8,
+                decoration: const InputDecoration(
+                  hintText: 'Cole aqui o backup JSON',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Restaurar e substituir'),
+          ),
+        ],
+      ),
+    );
+    final raw = controller.text;
+    controller.dispose();
+    if (submitted != true) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic> ||
+          decoded['format'] != 'mindart-backup' ||
+          decoded['version'] != 1 ||
+          decoded['data'] is! Map) {
+        throw const FormatException('Formato de backup inválido.');
+      }
+      final data = Map<String, dynamic>.from(decoded['data'] as Map);
+      _validateBackup(data);
+      await _applyCloudSnapshot(data);
+      if (_cloudReady) await _saveCloudSnapshot();
+      if (mounted) _message(context, 'Backup restaurado neste dispositivo.');
+    } catch (_) {
+      if (mounted) {
+        _message(context,
+            'Backup inválido ou danificado. Nenhum dado foi restaurado.');
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final pages = [_dashboard(), _projects(), _finances(), _routine()];
@@ -758,6 +868,27 @@ class _HomeShellState extends State<HomeShell> {
               ],
             ),
             actions: [
+              PopupMenuButton<String>(
+                tooltip: 'Backup dos dados',
+                icon: const Icon(Icons.more_vert),
+                onSelected: (option) {
+                  if (option == 'export') {
+                    _copyBackup();
+                  } else if (option == 'restore') {
+                    _restoreBackup();
+                  }
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: 'export',
+                    child: Text('Copiar backup'),
+                  ),
+                  PopupMenuItem(
+                    value: 'restore',
+                    child: Text('Restaurar backup'),
+                  ),
+                ],
+              ),
               if (cloudStorageEnabled)
                 IconButton(
                   tooltip: 'Sair da conta',
