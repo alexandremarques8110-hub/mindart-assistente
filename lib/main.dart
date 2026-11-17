@@ -737,6 +737,36 @@ class _HomeShellState extends State<HomeShell> {
 
 
 
+
+  Future<void> _disableNotifications() async {
+    if (!cloudStorageEnabled || vapidPublicKey.isEmpty) return;
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null || user.id != _accountId) return;
+    try {
+      final endpoint = await notifications.unsubscribeFromWebPush();
+      if (endpoint.isNotEmpty) {
+        await Supabase.instance.client.from('mindart_push_subscriptions')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('endpoint', endpoint);
+      }
+      if (mounted) _message(context, 'Notificações desativadas neste dispositivo.');
+    } catch (_) {
+      if (mounted) {
+        _message(context, 'Não consegui desativar todas as notificações.');
+      }
+    }
+  }
+
+  Future<void> _signOutSafely() async {
+    // Prevent an old account's subscriptions from remaining active
+    // in a browser subsequently used by another account.
+    if (vapidPublicKey.isNotEmpty) {
+      await _disableNotifications();
+    }
+    await Supabase.instance.client.auth.signOut();
+  }
+
   // User-initiated gesture. Required by Safari for iPhone web push.
   Future<void> _enableNotifications() async {
     if (!cloudStorageEnabled || vapidPublicKey.isEmpty) {
@@ -960,6 +990,8 @@ class _HomeShellState extends State<HomeShell> {
                 onSelected: (option) {
                   if (option == 'push') {
                     _enableNotifications();
+                  } else if (option == 'disable-push') {
+                    _disableNotifications();
                   } else if (option == 'export') {
                     _copyBackup();
                   } else if (option == 'restore') {
@@ -971,6 +1003,11 @@ class _HomeShellState extends State<HomeShell> {
                     const PopupMenuItem(
                       value: 'push',
                       child: Text('Ativar notificações'),
+                    ),
+                  if (cloudStorageEnabled)
+                    const PopupMenuItem(
+                      value: 'disable-push',
+                      child: Text('Desativar notificações'),
                     ),
                   const PopupMenuItem(
                     value: 'export',
@@ -985,7 +1022,7 @@ class _HomeShellState extends State<HomeShell> {
               if (cloudStorageEnabled)
                 IconButton(
                   tooltip: 'Sair da conta',
-                  onPressed: () => Supabase.instance.client.auth.signOut(),
+                  onPressed: _signOutSafely,
                   icon: const Icon(Icons.logout),
                 ),
               const Padding(
