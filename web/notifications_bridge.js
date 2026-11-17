@@ -35,3 +35,14 @@ window.mindartPushSubscribe = async function mindartPushSubscribe(vapidPublicKey
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
   });
 };
+
+window.mindartPushUnsubscribe = async function mindartPushUnsubscribe() {
+  if (!('serviceWorker' in navigator)) return '';
+  const worker = await navigator.serviceWorker.getRegistration('./');
+  if (!worker || !worker.pushManager) return '';
+  const subscription = await worker.pushManager.getSubscription();
+  if (!subscription) return '';
+  const endpoint = subscription.endpoint;
+  await subscription.unsubscribe();
+  return endpoint;
+};
