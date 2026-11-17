@@ -386,6 +386,7 @@ class _HomeShellState extends State<HomeShell> {
   final savingsGoals = <SavingsGoal>[];
   final projects = <ProjectItem>[];
   bool _cloudReady = false;
+  bool _loadingInitialData = true;
   bool _cloudWarningShown = false;
   RealtimeChannel? _cloudChannel;
 
@@ -423,6 +424,38 @@ class _HomeShellState extends State<HomeShell> {
       var savedDebts = await _storage.getString(_storageKey('debts'));
       var savedGoals = await _storage.getString(_storageKey('savingsGoals'));
       var savedProjects = await _storage.getString(_storageKey('projects'));
+      final dirtyOffline = cloudStorageEnabled &&
+          (await _storage.getBool(_storageKey('dirty')) ?? false);
+      if (dirtyOffline && cloudPayload != null && mounted) {
+        final preferLocal = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Alterações offline encontradas'),
+            content: const Text(
+              'Você alterou registros sem conexão. Deseja manter a versão '
+              'deste aparelho e enviá-la para a nuvem, ou usar a versão '
+              'que já está salva na nuvem?'
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Usar versão da nuvem'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Manter alterações offline'),
+              ),
+            ],
+          ),
+        );
+        if (!mounted) return;
+        if (preferLocal == true) {
+          cloudPayload = null;
+        } else {
+          await _storage.setBool(_storageKey('dirty'), false);
+        }
+      }
       // Explicit, one-time import for data created before account login.
       // Legacy data is never automatically assigned to another account.
       if (_accountId != null &&
@@ -558,6 +591,7 @@ class _HomeShellState extends State<HomeShell> {
       _listenForCloudChanges();
       await _syncReminderSchedule();
     }
+    _loadingInitialData = false;
     if (cloudStorageEnabled && !cloudLoadSucceeded && mounted) {
       _message(context,
           'Sem conexão com a nuvem. Você pode continuar usando os dados deste aparelho.');
@@ -588,8 +622,15 @@ class _HomeShellState extends State<HomeShell> {
         .subscribe();
   }
 
-  Future<void> _applyCloudSnapshot(Map<String, dynamic> payload) async {
+  Future<void> _applyCloudSnapshot(
+    Map<String, dynamic> payload, {
+    bool replaceOfflineChanges = false,
+  }) async {
     try {
+      if (!replaceOfflineChanges &&
+          (await _storage.getBool(_storageKey('dirty')) ?? false)) {
+        return;
+      }
       tasks
         ..clear()
         ..addAll(((payload['tasks'] ?? []) as List<dynamic>).map(
@@ -715,7 +756,12 @@ class _HomeShellState extends State<HomeShell> {
       };
 
   Future<void> _syncCloudIfReady() async {
-    if (_cloudReady) await _saveCloudSnapshot();
+    if (_loadingInitialData) return;
+    if (_cloudReady) {
+      await _saveCloudSnapshot();
+    } else if (cloudStorageEnabled) {
+      await _storage.setBool(_storageKey('dirty'), true);
+    }
   }
 
   Future<void> _saveCloudSnapshot() async {
@@ -726,7 +772,9 @@ class _HomeShellState extends State<HomeShell> {
         {'user_id': user.id, 'payload': _cloudSnapshot()},
         onConflict: 'user_id',
       );
+      await _storage.setBool(_storageKey('dirty'), false);
     } catch (_) {
+      await _storage.setBool(_storageKey('dirty'), true);
       if (mounted && !_cloudWarningShown) {
         _cloudWarningShown = true;
         _message(context,
@@ -942,7 +990,7 @@ class _HomeShellState extends State<HomeShell> {
       }
       final data = Map<String, dynamic>.from(decoded['data'] as Map);
       _validateBackup(data);
-      await _applyCloudSnapshot(data);
+      await _applyCloudSnapshot(data, replaceOfflineChanges: true);
       if (_cloudReady) await _saveCloudSnapshot();
       if (mounted) _message(context, 'Backup restaurado neste dispositivo.');
     } catch (_) {
