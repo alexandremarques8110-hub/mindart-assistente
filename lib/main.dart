@@ -666,6 +666,7 @@ class _HomeShellState extends State<HomeShell> {
   bool _cloudReady = false;
   bool _loadingInitialData = true;
   bool _cloudWarningShown = false;
+  bool _needsFeatureMigration = false;
   bool _syncInProgress = false;
   bool _syncPending = false;
   RealtimeChannel? _cloudChannel;
@@ -802,10 +803,21 @@ class _HomeShellState extends State<HomeShell> {
         savedDebts = jsonEncode(cloudPayload['debts'] ?? []);
         savedGoals = jsonEncode(cloudPayload['savingsGoals'] ?? []);
         savedProjects = jsonEncode(cloudPayload['projects'] ?? []);
-        savedVoice = jsonEncode(cloudPayload['voiceEntries'] ?? []);
-        savedHealth = jsonEncode(cloudPayload['healthEntries'] ?? []);
-        savedLessons = jsonEncode(cloudPayload['completedLessons'] ?? []);
-        savedQuizzes = jsonEncode(cloudPayload['passedQuizzes'] ?? []);
+        _needsFeatureMigration = const [
+          'voiceEntries', 'healthEntries', 'completedLessons', 'passedQuizzes'
+        ].any((key) => !cloudPayload!.containsKey(key));
+        if (cloudPayload.containsKey('voiceEntries')) {
+          savedVoice = jsonEncode(cloudPayload['voiceEntries']);
+        }
+        if (cloudPayload.containsKey('healthEntries')) {
+          savedHealth = jsonEncode(cloudPayload['healthEntries']);
+        }
+        if (cloudPayload.containsKey('completedLessons')) {
+          savedLessons = jsonEncode(cloudPayload['completedLessons']);
+        }
+        if (cloudPayload.containsKey('passedQuizzes')) {
+          savedQuizzes = jsonEncode(cloudPayload['passedQuizzes']);
+        }
       }
       if (savedTasks != null) {
         tasks
@@ -902,7 +914,9 @@ class _HomeShellState extends State<HomeShell> {
     await _saveGoals();
     await _saveProjects();
     _cloudReady = cloudStorageEnabled && cloudLoadSucceeded;
-    if (_cloudReady && cloudPayload == null) await _saveCloudSnapshot();
+    if (_cloudReady && (cloudPayload == null || _needsFeatureMigration)) {
+      await _saveCloudSnapshot();
+    }
     if (_cloudReady) {
       _listenForCloudChanges();
       await _syncReminderSchedule();
@@ -949,8 +963,8 @@ class _HomeShellState extends State<HomeShell> {
               (await _storage.getBool(_storageKey('dirty')) ?? false))) {
         return;
       }
-      List<dynamic> listFor(String key) {
-        final value = payload[key] ?? const [];
+      List<dynamic> listFor(String key, [List<dynamic> fallback = const []]) {
+        final value = payload[key] ?? fallback;
         if (value is! List) throw const FormatException('Snapshot inválido.');
         return value;
       }
@@ -960,8 +974,8 @@ class _HomeShellState extends State<HomeShell> {
         return Map<String, dynamic>.from(item);
       }
 
-      Set<String> stringSet(String key) {
-        final values = listFor(key);
+      Set<String> stringSet(String key, [Set<String> fallback = const {}]) {
+        final values = listFor(key, fallback.toList());
         if (values.any((value) => value is! String)) {
           throw const FormatException('Progresso inválido.');
         }
@@ -980,12 +994,12 @@ class _HomeShellState extends State<HomeShell> {
           .map((item) => SavingsGoal.fromJson(itemMap(item))).toList();
       final nextProjects = listFor('projects')
           .map((item) => ProjectItem.fromJson(itemMap(item))).toList();
-      final nextVoice = listFor('voiceEntries')
+      final nextVoice = listFor('voiceEntries', voiceEntries.map((item) => item.toJson()).toList())
           .map((item) => VoiceEntry.fromJson(itemMap(item))).toList();
-      final nextHealth = listFor('healthEntries')
+      final nextHealth = listFor('healthEntries', healthEntries.map((item) => item.toJson()).toList())
           .map((item) => HealthEntry.fromJson(itemMap(item))).toList();
-      final nextLessons = stringSet('completedLessons');
-      final nextQuizzes = stringSet('passedQuizzes');
+      final nextLessons = stringSet('completedLessons', completedLessons);
+      final nextQuizzes = stringSet('passedQuizzes', passedQuizzes);
       tasks
         ..clear()
         ..addAll(nextTasks);

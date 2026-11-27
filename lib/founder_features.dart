@@ -258,14 +258,17 @@ class _MindArtHubState extends State<MindArtHub> {
                                 return;
                               }
                               await _speech.listen(
-                                localeId: 'pt_BR',
-                                listenFor: const Duration(seconds: 30),
-                                pauseFor: const Duration(seconds: 3),
                                 onResult: (result) {
                                   controller.text = result.recognizedWords;
                                   category = _classify(controller.text);
                                   setDialogState(() {});
                                 },
+                                listenOptions: SpeechListenOptions(
+                                  localeId: 'pt_BR',
+                                  listenFor: const Duration(seconds: 30),
+                                  pauseFor: const Duration(seconds: 3),
+                                  listenMode: ListenMode.dictation,
+                                ),
                               );
                             } finally {
                               if (context.mounted) setDialogState(() => saving = false);
@@ -341,7 +344,7 @@ class _MindArtHubState extends State<MindArtHub> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   DropdownButtonFormField<String>(
-                    value: kind,
+                    initialValue: kind,
                     decoration: const InputDecoration(labelText: 'Tipo'),
                     items: const ['Alimentação', 'Medicamento', 'Procedimento', 'Consulta', 'Nota de saúde']
                         .map((value) => DropdownMenuItem(value: value, child: Text(value)))
@@ -440,13 +443,22 @@ class _MindArtHubState extends State<MindArtHub> {
                   const SizedBox(height: 20),
                   Text(lesson.question, style: const TextStyle(fontWeight: FontWeight.w700)),
                   const SizedBox(height: 8),
-                  ...List.generate(lesson.answers.length, (index) => RadioListTile<int>(
-                        value: index,
-                        groupValue: selected,
-                        title: Text(lesson.answers[index]),
-                        onChanged: answered ? null : (value) => setDialogState(() => selected = value ?? -1),
-                        contentPadding: EdgeInsets.zero,
-                      )),
+                  RadioGroup<int>(
+                    groupValue: selected,
+                    onChanged: answered
+                        ? (_) {}
+                        : (value) => setDialogState(() => selected = value ?? -1),
+                    child: Column(
+                      children: List.generate(
+                        lesson.answers.length,
+                        (index) => RadioListTile<int>(
+                          value: index,
+                          title: Text(lesson.answers[index]),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                    ),
+                  ),
                   if (quizMessage.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
