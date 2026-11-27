@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'founder_features.dart';
 import 'notifications_stub.dart'
     if (dart.library.js_interop) 'notifications_web.dart' as notifications;
 
@@ -43,18 +44,24 @@ Future<void> main() async {
   runApp(const MindArtApp());
 }
 
-const teal = Color(0xFF167C80);
-const paper = Color(0xFFF5F7F5);
+const deepGold = Color(0xFF745A00);
+const gold = Color(0xFFC5A347);
+const paper = Color(0xFFFFFEFA);
 const _themeSettingKey = 'mindart.ui.theme';
 final ValueNotifier<ThemeMode> mindArtTheme = ValueNotifier(ThemeMode.light);
 
 ThemeData mindArtThemeData(Brightness brightness) {
   final dark = brightness == Brightness.dark;
   final scheme = ColorScheme.fromSeed(
-    seedColor: dark ? const Color(0xFF64CBC1) : teal,
+    seedColor: gold,
     brightness: brightness,
+  ).copyWith(
+    primary: dark ? const Color(0xFFE2C56B) : deepGold,
+    onPrimary: dark ? const Color(0xFF17140A) : Colors.white,
+    secondary: dark ? const Color(0xFFC5A347) : deepGold,
+    surface: dark ? const Color(0xFF111111) : paper,
   );
-  final surface = dark ? const Color(0xFF101B25) : paper;
+  final surface = dark ? const Color(0xFF101010) : paper;
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
@@ -64,7 +71,7 @@ ThemeData mindArtThemeData(Brightness brightness) {
       foregroundColor: scheme.onSurface,
     ),
     cardTheme: CardThemeData(
-      color: dark ? const Color(0xFF1A2A35) : Colors.white,
+      color: dark ? const Color(0xFF1C1C1C) : Colors.white,
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
     ),
@@ -232,7 +239,8 @@ class _PasswordRecoveryPageState extends State<PasswordRecoveryPage> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const Icon(Icons.lock_reset, color: teal, size: 44),
+                      Icon(Icons.lock_reset,
+                          color: Theme.of(context).colorScheme.primary, size: 44),
                       const SizedBox(height: 14),
                       Text(
                         _saved ? 'Senha alterada!' : 'Definir nova senha',
@@ -393,7 +401,8 @@ class _AccountPageState extends State<AccountPage> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const Icon(Icons.auto_awesome, color: teal, size: 40),
+                      Icon(Icons.auto_awesome,
+                          color: Theme.of(context).colorScheme.primary, size: 40),
                       const SizedBox(height: 12),
                       Text(
                         _creatingAccount
@@ -650,9 +659,15 @@ class _HomeShellState extends State<HomeShell> {
   final debts = <DebtItem>[];
   final savingsGoals = <SavingsGoal>[];
   final projects = <ProjectItem>[];
+  final voiceEntries = <VoiceEntry>[];
+  final healthEntries = <HealthEntry>[];
+  final completedLessons = <String>{};
+  final passedQuizzes = <String>{};
   bool _cloudReady = false;
   bool _loadingInitialData = true;
   bool _cloudWarningShown = false;
+  bool _syncInProgress = false;
+  bool _syncPending = false;
   RealtimeChannel? _cloudChannel;
 
   @override
@@ -689,6 +704,10 @@ class _HomeShellState extends State<HomeShell> {
       var savedDebts = await _storage.getString(_storageKey('debts'));
       var savedGoals = await _storage.getString(_storageKey('savingsGoals'));
       var savedProjects = await _storage.getString(_storageKey('projects'));
+      var savedVoice = await _storage.getString(_storageKey('voiceEntries'));
+      var savedHealth = await _storage.getString(_storageKey('healthEntries'));
+      var savedLessons = await _storage.getString(_storageKey('completedLessons'));
+      var savedQuizzes = await _storage.getString(_storageKey('passedQuizzes'));
       final dirtyOffline = cloudStorageEnabled &&
           (await _storage.getBool(_storageKey('dirty')) ?? false);
       if (dirtyOffline && cloudPayload != null && mounted) {
@@ -726,13 +745,14 @@ class _HomeShellState extends State<HomeShell> {
       if (_accountId != null &&
           cloudPayload == null &&
           [savedTasks, savedExpenses, savedEvents, savedDebts, savedGoals,
-                  savedProjects]
+                  savedProjects, savedVoice, savedHealth, savedLessons, savedQuizzes]
               .every((value) => value == null)) {
         final legacyOwner = await _storage.getString('mindart.legacy.owner');
         if (legacyOwner == null || legacyOwner == _accountId) {
           final legacy = <String, String?>{};
           for (final field in const [
-            'tasks', 'expenses', 'events', 'debts', 'savingsGoals', 'projects'
+            'tasks', 'expenses', 'events', 'debts', 'savingsGoals', 'projects',
+            'voiceEntries', 'healthEntries', 'completedLessons', 'passedQuizzes'
           ]) {
             legacy[field] = await _storage.getString('mindart.$field');
           }
@@ -767,6 +787,10 @@ class _HomeShellState extends State<HomeShell> {
               savedDebts = legacy['debts'];
               savedGoals = legacy['savingsGoals'];
               savedProjects = legacy['projects'];
+              savedVoice = legacy['voiceEntries'];
+              savedHealth = legacy['healthEntries'];
+              savedLessons = legacy['completedLessons'];
+              savedQuizzes = legacy['passedQuizzes'];
             }
           }
         }
@@ -778,6 +802,10 @@ class _HomeShellState extends State<HomeShell> {
         savedDebts = jsonEncode(cloudPayload['debts'] ?? []);
         savedGoals = jsonEncode(cloudPayload['savingsGoals'] ?? []);
         savedProjects = jsonEncode(cloudPayload['projects'] ?? []);
+        savedVoice = jsonEncode(cloudPayload['voiceEntries'] ?? []);
+        savedHealth = jsonEncode(cloudPayload['healthEntries'] ?? []);
+        savedLessons = jsonEncode(cloudPayload['completedLessons'] ?? []);
+        savedQuizzes = jsonEncode(cloudPayload['passedQuizzes'] ?? []);
       }
       if (savedTasks != null) {
         tasks
@@ -832,6 +860,30 @@ class _HomeShellState extends State<HomeShell> {
               (item) => ProjectItem.fromJson(item as Map<String, dynamic>),
             ),
           );
+      }
+      if (savedVoice != null) {
+        voiceEntries
+          ..clear()
+          ..addAll((jsonDecode(savedVoice) as List<dynamic>).map(
+            (item) => VoiceEntry.fromJson(Map<String, dynamic>.from(item as Map)),
+          ));
+      }
+      if (savedHealth != null) {
+        healthEntries
+          ..clear()
+          ..addAll((jsonDecode(savedHealth) as List<dynamic>).map(
+            (item) => HealthEntry.fromJson(Map<String, dynamic>.from(item as Map)),
+          ));
+      }
+      if (savedLessons != null) {
+        completedLessons
+          ..clear()
+          ..addAll((jsonDecode(savedLessons) as List<dynamic>).cast<String>());
+      }
+      if (savedQuizzes != null) {
+        passedQuizzes
+          ..clear()
+          ..addAll((jsonDecode(savedQuizzes) as List<dynamic>).cast<String>());
       }
       for (final task in tasks) {
         if (task.project != 'Pessoal' &&
@@ -893,43 +945,77 @@ class _HomeShellState extends State<HomeShell> {
   }) async {
     try {
       if (!replaceOfflineChanges &&
-          (await _storage.getBool(_storageKey('dirty')) ?? false)) {
+          (_syncInProgress ||
+              (await _storage.getBool(_storageKey('dirty')) ?? false))) {
         return;
       }
+      List<dynamic> listFor(String key) {
+        final value = payload[key] ?? const [];
+        if (value is! List) throw const FormatException('Snapshot inválido.');
+        return value;
+      }
+
+      Map<String, dynamic> itemMap(Object? item) {
+        if (item is! Map) throw const FormatException('Registro inválido.');
+        return Map<String, dynamic>.from(item);
+      }
+
+      Set<String> stringSet(String key) {
+        final values = listFor(key);
+        if (values.any((value) => value is! String)) {
+          throw const FormatException('Progresso inválido.');
+        }
+        return values.cast<String>().toSet();
+      }
+
+      final nextTasks = listFor('tasks')
+          .map((item) => TaskItem.fromJson(itemMap(item))).toList();
+      final nextExpenses = listFor('expenses')
+          .map((item) => ExpenseItem.fromJson(itemMap(item))).toList();
+      final nextEvents = listFor('events')
+          .map((item) => RoutineEvent.fromJson(itemMap(item))).toList();
+      final nextDebts = listFor('debts')
+          .map((item) => DebtItem.fromJson(itemMap(item))).toList();
+      final nextGoals = listFor('savingsGoals')
+          .map((item) => SavingsGoal.fromJson(itemMap(item))).toList();
+      final nextProjects = listFor('projects')
+          .map((item) => ProjectItem.fromJson(itemMap(item))).toList();
+      final nextVoice = listFor('voiceEntries')
+          .map((item) => VoiceEntry.fromJson(itemMap(item))).toList();
+      final nextHealth = listFor('healthEntries')
+          .map((item) => HealthEntry.fromJson(itemMap(item))).toList();
+      final nextLessons = stringSet('completedLessons');
+      final nextQuizzes = stringSet('passedQuizzes');
       tasks
         ..clear()
-        ..addAll(((payload['tasks'] ?? []) as List<dynamic>).map(
-          (item) => TaskItem.fromJson(Map<String, dynamic>.from(item as Map)),
-        ));
+        ..addAll(nextTasks);
       expenses
         ..clear()
-        ..addAll(((payload['expenses'] ?? []) as List<dynamic>).map(
-          (item) =>
-              ExpenseItem.fromJson(Map<String, dynamic>.from(item as Map)),
-        ));
+        ..addAll(nextExpenses);
       events
         ..clear()
-        ..addAll(((payload['events'] ?? []) as List<dynamic>).map(
-          (item) =>
-              RoutineEvent.fromJson(Map<String, dynamic>.from(item as Map)),
-        ));
+        ..addAll(nextEvents);
       debts
         ..clear()
-        ..addAll(((payload['debts'] ?? []) as List<dynamic>).map(
-          (item) => DebtItem.fromJson(Map<String, dynamic>.from(item as Map)),
-        ));
+        ..addAll(nextDebts);
       savingsGoals
         ..clear()
-        ..addAll(((payload['savingsGoals'] ?? []) as List<dynamic>).map(
-          (item) =>
-              SavingsGoal.fromJson(Map<String, dynamic>.from(item as Map)),
-        ));
+        ..addAll(nextGoals);
       projects
         ..clear()
-        ..addAll(((payload['projects'] ?? []) as List<dynamic>).map(
-          (item) =>
-              ProjectItem.fromJson(Map<String, dynamic>.from(item as Map)),
-        ));
+        ..addAll(nextProjects);
+      voiceEntries
+        ..clear()
+        ..addAll(nextVoice);
+      healthEntries
+        ..clear()
+        ..addAll(nextHealth);
+      completedLessons
+        ..clear()
+        ..addAll(nextLessons);
+      passedQuizzes
+        ..clear()
+        ..addAll(nextQuizzes);
       if (!mounted) return;
       setState(() {});
       await _storage.setString(_storageKey('tasks'),
@@ -944,6 +1030,14 @@ class _HomeShellState extends State<HomeShell> {
           jsonEncode(savingsGoals.map((item) => item.toJson()).toList()));
       await _storage.setString(_storageKey('projects'),
           jsonEncode(projects.map((item) => item.toJson()).toList()));
+      await _storage.setString(_storageKey('voiceEntries'),
+          jsonEncode(voiceEntries.map((item) => item.toJson()).toList()));
+      await _storage.setString(_storageKey('healthEntries'),
+          jsonEncode(healthEntries.map((item) => item.toJson()).toList()));
+      await _storage.setString(_storageKey('completedLessons'),
+          jsonEncode(completedLessons.toList()));
+      await _storage.setString(_storageKey('passedQuizzes'),
+          jsonEncode(passedQuizzes.toList()));
     } catch (_) {
       if (mounted && !_cloudWarningShown) {
         _cloudWarningShown = true;
@@ -1011,6 +1105,18 @@ class _HomeShellState extends State<HomeShell> {
     await _syncCloudIfReady();
   }
 
+  Future<void> _saveFounderFeatures() async {
+    await _storage.setString(_storageKey('voiceEntries'),
+        jsonEncode(voiceEntries.map((item) => item.toJson()).toList()));
+    await _storage.setString(_storageKey('healthEntries'),
+        jsonEncode(healthEntries.map((item) => item.toJson()).toList()));
+    await _storage.setString(_storageKey('completedLessons'),
+        jsonEncode(completedLessons.toList()));
+    await _storage.setString(_storageKey('passedQuizzes'),
+        jsonEncode(passedQuizzes.toList()));
+    await _syncCloudIfReady();
+  }
+
   Map<String, Object?> _cloudSnapshot() => {
         'tasks': tasks.map((item) => item.toJson()).toList(),
         'expenses': expenses.map((item) => item.toJson()).toList(),
@@ -1018,6 +1124,10 @@ class _HomeShellState extends State<HomeShell> {
         'debts': debts.map((item) => item.toJson()).toList(),
         'savingsGoals': savingsGoals.map((item) => item.toJson()).toList(),
         'projects': projects.map((item) => item.toJson()).toList(),
+        'voiceEntries': voiceEntries.map((item) => item.toJson()).toList(),
+        'healthEntries': healthEntries.map((item) => item.toJson()).toList(),
+        'completedLessons': completedLessons.toList(),
+        'passedQuizzes': passedQuizzes.toList(),
       };
 
   Future<void> _syncCloudIfReady() async {
@@ -1032,19 +1142,33 @@ class _HomeShellState extends State<HomeShell> {
   Future<void> _saveCloudSnapshot() async {
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null || user.id != _accountId) return;
+    if (_syncInProgress) {
+      _syncPending = true;
+      return;
+    }
+    _syncInProgress = true;
     try {
-      await Supabase.instance.client.from('mindart_user_data').upsert(
-        {'user_id': user.id, 'payload': _cloudSnapshot()},
-        onConflict: 'user_id',
-      );
-      await _storage.setBool(_storageKey('dirty'), false);
-    } catch (_) {
-      await _storage.setBool(_storageKey('dirty'), true);
-      if (mounted && !_cloudWarningShown) {
-        _cloudWarningShown = true;
-        _message(context,
-            'Salvei neste aparelho, mas não consegui atualizar a nuvem. Confira sua conexão.');
-      }
+      do {
+        _syncPending = false;
+        await _storage.setBool(_storageKey('dirty'), true);
+        try {
+          await Supabase.instance.client.from('mindart_user_data').upsert(
+            {'user_id': user.id, 'payload': _cloudSnapshot()},
+            onConflict: 'user_id',
+          );
+          await _storage.setBool(_storageKey('dirty'), false);
+        } catch (_) {
+          await _storage.setBool(_storageKey('dirty'), true);
+          if (mounted && !_cloudWarningShown) {
+            _cloudWarningShown = true;
+            _message(context,
+                'Salvei neste aparelho, mas não consegui atualizar a nuvem. Confira sua conexão.');
+          }
+          return;
+        }
+      } while (_syncPending);
+    } finally {
+      _syncInProgress = false;
     }
   }
 
@@ -1181,6 +1305,19 @@ class _HomeShellState extends State<HomeShell> {
         throw const FormatException('Backup incompleto.');
       }
     }
+    for (final name in const ['voiceEntries', 'healthEntries']) {
+      final value = data[name];
+      if (value != null && value is! List) {
+        throw const FormatException('Seção opcional inválida.');
+      }
+    }
+    for (final name in const ['completedLessons', 'passedQuizzes']) {
+      final value = data[name];
+      if (value != null &&
+          (value is! List || value.any((item) => item is! String))) {
+        throw const FormatException('Progresso do Academy inválido.');
+      }
+    }
     for (final item in (data['tasks'] as List)) {
       TaskItem.fromJson(Map<String, dynamic>.from(item as Map));
     }
@@ -1198,6 +1335,12 @@ class _HomeShellState extends State<HomeShell> {
     }
     for (final item in (data['projects'] as List)) {
       ProjectItem.fromJson(Map<String, dynamic>.from(item as Map));
+    }
+    for (final item in (data['voiceEntries'] as List? ?? const [])) {
+      VoiceEntry.fromJson(Map<String, dynamic>.from(item as Map));
+    }
+    for (final item in (data['healthEntries'] as List? ?? const [])) {
+      HealthEntry.fromJson(Map<String, dynamic>.from(item as Map));
     }
   }
 
@@ -1268,7 +1411,34 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    final pages = [_dashboard(), _projects(), _finances(), _routine()];
+    final pages = [
+      _dashboard(),
+      _projects(),
+      _finances(),
+      _routine(),
+      MindArtHub(
+        voiceEntries: voiceEntries,
+        healthEntries: healthEntries,
+        completedLessons: completedLessons,
+        passedQuizzes: passedQuizzes,
+        onVoiceEntriesChanged: (items) => setState(() {
+          voiceEntries..clear()..addAll(items);
+          unawaited(_saveFounderFeatures());
+        }),
+        onHealthEntriesChanged: (items) => setState(() {
+          healthEntries..clear()..addAll(items);
+          unawaited(_saveFounderFeatures());
+        }),
+        onCompletedLessonsChanged: (items) => setState(() {
+          completedLessons..clear()..addAll(items);
+          unawaited(_saveFounderFeatures());
+        }),
+        onPassedQuizzesChanged: (items) => setState(() {
+          passedQuizzes..clear()..addAll(items);
+          unawaited(_saveFounderFeatures());
+        }),
+      ),
+    ];
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 760;
@@ -1280,12 +1450,12 @@ class _HomeShellState extends State<HomeShell> {
                   width: 36,
                   height: 36,
                   decoration: BoxDecoration(
-                    color: teal,
+                    color: Colors.black,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: const Icon(
                     Icons.auto_awesome,
-                    color: Colors.white,
+                    color: gold,
                     size: 20,
                   ),
                 ),
@@ -1351,11 +1521,12 @@ class _HomeShellState extends State<HomeShell> {
                   onPressed: _signOutSafely,
                   icon: const Icon(Icons.logout),
                 ),
-              const Padding(
+              Padding(
                 padding: EdgeInsets.only(right: 20),
                 child: CircleAvatar(
-                  backgroundColor: Color(0xFFDCEBE8),
-                  child: Icon(Icons.person_outline, color: teal),
+                  backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                  child: Icon(Icons.person_outline,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer),
                 ),
               ),
             ],
@@ -1387,6 +1558,10 @@ class _HomeShellState extends State<HomeShell> {
                             icon: Icon(Icons.calendar_month_outlined),
                             label: Text('Rotina'),
                           ),
+                          NavigationRailDestination(
+                            icon: Icon(Icons.auto_awesome_outlined),
+                            label: Text('MindArt'),
+                          ),
                         ],
                       ),
                     Expanded(
@@ -1417,12 +1592,16 @@ class _HomeShellState extends State<HomeShell> {
                       icon: Icon(Icons.calendar_month_outlined),
                       label: 'Rotina',
                     ),
+                    NavigationDestination(
+                      icon: Icon(Icons.auto_awesome_outlined),
+                      label: 'MindArt',
+                    ),
                   ],
                 ),
           floatingActionButton: FloatingActionButton(
             onPressed: () => _addItem(context),
-            backgroundColor: teal,
-            foregroundColor: Colors.white,
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            foregroundColor: Theme.of(context).colorScheme.onPrimary,
             child: const Icon(Icons.add),
           ),
         );
@@ -1453,7 +1632,10 @@ class _HomeShellState extends State<HomeShell> {
         children: [
           Text(
             _greeting(),
-            style: TextStyle(color: teal, fontWeight: FontWeight.w700),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.primary,
+              fontWeight: FontWeight.w700,
+            ),
           ),
           const SizedBox(height: 5),
           Text(
@@ -1463,6 +1645,26 @@ class _HomeShellState extends State<HomeShell> {
               fontWeight: FontWeight.w800,
               color: Theme.of(context).colorScheme.onSurface,
             ),
+          ),
+          const SizedBox(height: 22),
+          Text('Acesso rápido',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: Theme.of(context).colorScheme.onSurface,
+              )),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _oneTouch('Nova tarefa', Icons.add_task, () => _editTask(null)),
+              _oneTouch('Registrar gasto', Icons.add_card_outlined,
+                  () => _editExpense(null)),
+              _oneTouch('Compromisso', Icons.event_available_outlined,
+                  _addEvent),
+              _oneTouch('MindArt Voice', Icons.mic_none,
+                  () => setState(() => selected = 4)),
+            ],
           ),
           const SizedBox(height: 22),
           _sectionTitle(
@@ -1506,7 +1708,7 @@ class _HomeShellState extends State<HomeShell> {
                   'Tarefas concluídas',
                   '${done}/${tasks.length}',
                   Icons.check_circle_outline,
-                  teal,
+                  Theme.of(context).colorScheme.primary,
                 ),
               ),
               const SizedBox(width: 12),
@@ -1515,7 +1717,7 @@ class _HomeShellState extends State<HomeShell> {
                   'Gastos no mês',
                   _money(monthTotal),
                   Icons.trending_down,
-                  const Color(0xFFB76C42),
+                  Theme.of(context).colorScheme.secondary,
                 ),
               ),
             ],
@@ -1603,6 +1805,13 @@ class _HomeShellState extends State<HomeShell> {
       ),
     );
   }
+
+  Widget _oneTouch(String label, IconData icon, VoidCallback onPressed) =>
+      OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 18),
+        label: Text(label),
+      );
 
   Widget _upcomingEventTile(RoutineEvent event) => Card(
         child: ListTile(
@@ -1696,7 +1905,9 @@ class _HomeShellState extends State<HomeShell> {
             const SizedBox(height: 6),
             Text('${projectTasks.length} tarefa(s)',
                 style: TextStyle(
-                    color: teal, fontSize: 12, fontWeight: FontWeight.w700)),
+                    color: Theme.of(context).colorScheme.primary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700)),
             if (projectTasks.isNotEmpty) ...[
               const SizedBox(height: 8),
               ...projectTasks.map(_taskTile),
@@ -1774,9 +1985,10 @@ class _HomeShellState extends State<HomeShell> {
                 'Toque em + para adicionar uma despesa.'),
           ...expenses.map((expense) => Card(
                 child: ListTile(
-                  leading: const CircleAvatar(
-                      backgroundColor: Color(0xFFE5F1EF),
-                      child: Icon(Icons.receipt_long, color: teal)),
+                  leading: CircleAvatar(
+                      backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                      child: Icon(Icons.receipt_long,
+                          color: Theme.of(context).colorScheme.primary)),
                   title: Text(expense.title,
                       style: TextStyle(fontWeight: FontWeight.w700)),
                   subtitle: Text(expense.category),
@@ -1843,8 +2055,8 @@ class _HomeShellState extends State<HomeShell> {
               const SizedBox(height: 10),
               LinearProgressIndicator(
                   value: debt.total == 0 ? 0 : debt.paid / debt.total,
-                  color: teal,
-                  backgroundColor: const Color(0xFFE4ECE9)),
+                  color: Theme.of(context).colorScheme.primary,
+                  backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest),
               const SizedBox(height: 10),
               Align(
                 alignment: Alignment.centerRight,
@@ -1900,8 +2112,8 @@ class _HomeShellState extends State<HomeShell> {
               const SizedBox(height: 10),
               LinearProgressIndicator(
                   value: goal.progress,
-                  color: teal,
-                  backgroundColor: const Color(0xFFE4ECE9)),
+                  color: Theme.of(context).colorScheme.primary,
+                  backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest),
               const SizedBox(height: 10),
               Align(
                 alignment: Alignment.centerRight,
@@ -1932,9 +2144,9 @@ class _HomeShellState extends State<HomeShell> {
                 padding: const EdgeInsets.all(22),
                 child: Row(
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.calendar_today_outlined,
-                      color: teal,
+                      color: Theme.of(context).colorScheme.primary,
                       size: 30,
                     ),
                     const SizedBox(width: 14),
@@ -2046,10 +2258,10 @@ class _HomeShellState extends State<HomeShell> {
           title: Row(
             children: [
               if (task.priority)
-                const Padding(
+                Padding(
                   padding: EdgeInsets.only(right: 6),
                   child: Icon(Icons.star_rounded,
-                      color: Color(0xFFE0A442), size: 21),
+                      color: Theme.of(context).colorScheme.secondary, size: 21),
                 ),
               Expanded(
                 child: Text(
@@ -2065,7 +2277,7 @@ class _HomeShellState extends State<HomeShell> {
             ],
           ),
           subtitle: Text('${task.project}  ·  ${task.date}'),
-          activeColor: teal,
+          activeColor: Theme.of(context).colorScheme.primary,
           secondary: PopupMenuButton<String>(
             tooltip: 'Opções da tarefa',
             onSelected: (action) async {
@@ -2111,9 +2323,10 @@ class _HomeShellState extends State<HomeShell> {
 
   Widget _eventTile(RoutineEvent event) => Card(
         child: ListTile(
-          leading: const CircleAvatar(
-            backgroundColor: Color(0xFFE5F1EF),
-            child: Icon(Icons.event_outlined, color: teal),
+          leading: CircleAvatar(
+            backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+            child: Icon(Icons.event_outlined,
+                color: Theme.of(context).colorScheme.primary),
           ),
           title: Text(
             event.title,
@@ -2146,8 +2359,9 @@ class _HomeShellState extends State<HomeShell> {
               child: Row(
                 children: [
                   CircleAvatar(
-                    backgroundColor: const Color(0xFFE5F1EF),
-                    child: Icon(icon, color: teal),
+                    backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                    child: Icon(icon,
+                        color: Theme.of(context).colorScheme.primary),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -2182,7 +2396,8 @@ class _HomeShellState extends State<HomeShell> {
           child: Center(
             child: Column(
               children: [
-                const Icon(Icons.spa_outlined, color: teal, size: 30),
+                Icon(Icons.spa_outlined,
+                    color: Theme.of(context).colorScheme.primary, size: 30),
                 const SizedBox(height: 8),
                 Text(title,
                     style: TextStyle(fontWeight: FontWeight.w700)),

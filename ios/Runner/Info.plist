@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>O MindArt usa o microfone somente quando você inicia um registro por voz.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>O MindArt converte em texto o registro por voz iniciado por você.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
