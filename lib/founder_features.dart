@@ -117,6 +117,28 @@ VoiceIntent classifyVoiceIntent(String text, {DateTime? now}) {
         date = DateTime(year, month, day);
         if (date.month != month || date.day != day) date = null;
       }
+    } else {
+      const weekdays = {
+        'domingo': DateTime.sunday,
+        'segunda': DateTime.monday,
+        'terca': DateTime.tuesday,
+        'quarta': DateTime.wednesday,
+        'quinta': DateTime.thursday,
+        'sexta': DateTime.friday,
+        'sabado': DateTime.saturday,
+      };
+      for (final weekday in weekdays.entries) {
+        if (RegExp('\\b${weekday.key}(?:-feira)?\\b').hasMatch(normalized)) {
+          var daysAhead = (weekday.value - reference.weekday + 7) % 7;
+          if (daysAhead == 0) daysAhead = 7;
+          date = DateTime(
+            reference.year,
+            reference.month,
+            reference.day + daysAhead,
+          );
+          break;
+        }
+      }
     }
   }
   final timeMatch = RegExp(r'(?:\b(?:as|pelas|por volta das)\s+)?(\d{1,2})(?::(\d{2})|h(\d{2})?|\s*horas?)?\b').firstMatch(normalized);
@@ -125,7 +147,7 @@ VoiceIntent classifyVoiceIntent(String text, {DateTime? now}) {
   ).hasMatch(normalized);
   DateTime? scheduledAt;
   if (hasTime) {
-    var hour = int.parse(timeMatch!.group(1)!);
+    var hour = int.parse(timeMatch.group(1)!);
     final minute = int.tryParse(timeMatch.group(2) ?? timeMatch.group(3) ?? '') ?? 0;
     if (hour < 12 && RegExp(r'\b(tarde|noite)\b').hasMatch(normalized)) {
       hour += 12;

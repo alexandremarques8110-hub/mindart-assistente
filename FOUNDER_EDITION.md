@@ -40,3 +40,11 @@ MindPoints não têm valor monetário e não podem ser comprados. Não há conta
 1. Validar o fluxo Voice no Safari/iPhone e num navegador Chromium com reconhecimento de fala.
 2. Revisar os novos campos com dados de teste e confirmar a sincronização em dois dispositivos da conta Usuário 000.
 3. Após validar, planejar o fluxo de release aprovado pelo idealizador. A versão iOS nativa da App Store requer assinatura e compilação num Mac com Xcode.
+
+## Ajuste de roteamento do MindArt Voice — 27/11/2026
+
+- A classificação agora transforma falas claras em registros funcionais: tarefas vão para as prioridades, gastos com valor explícito para os lançamentos de Finanças, registros de saúde para MindArt Saúde e falas com data/hora para a agenda.
+- Uma fala classificada como Finanças sem valor aparece como anotação na área de Finanças e em “Registros recentes”, sem alterar totais nem inventar um valor.
+- O “Meu dia” passou a mostrar as três falas recentes. Tarefas ditadas recebem prioridade; quando a pessoa diz o horário, a agenda recebe o compromisso e usa esse horário para o lembrete. O aviso depende das notificações estarem ativadas no dispositivo.
+- O agendamento existente foi otimizado em lote. A persistência local acontece primeiro e a sincronização de rede continua em segundo plano; as leituras do cache local são paralelas.
+- Testes novos cobrem academia como tarefa, almoço com valor declarado, finanças sem valor e datas/horários falados, incluindo dia da semana.

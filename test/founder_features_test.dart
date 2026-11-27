@@ -87,5 +87,15 @@ void main() {
       expect(intent.category, 'Finanças');
       expect(intent.expenseAmount, isNull);
     });
+
+    test('voice understands a weekday and an afternoon time', () {
+      final now = DateTime(2026, 11, 27, 10); // Friday
+      final intent = classifyVoiceIntent(
+        'Academia na terça às 6 da tarde',
+        now: now,
+      );
+
+      expect(intent.scheduledAt, DateTime(2026, 12, 1, 18));
+    });
   });
 }
