@@ -1,6 +1,6 @@
-# MindArt — assistente pessoal
+# MindArt 000 — Founder Edition
 
-Aplicativo pessoal para organizar projetos, finanças e rotina, priorizando o uso no iPhone. A primeira entrega será uma web app instalável pela tela inicial do Safari; uma versão nativa para App Store pode vir depois.
+Aplicativo pessoal para organizar tarefas, projetos, finanças, saúde e rotina, priorizando o uso no iPhone e no computador. A entrega atual é uma web app instalável pela tela inicial do Safari; uma versão nativa para App Store depende de assinatura e compilação em macOS/Xcode.
 
 ## Escopo do MVP
 
@@ -10,6 +10,11 @@ Aplicativo pessoal para organizar projetos, finanças e rotina, priorizando o us
 - **Rotina:** compromissos e hábitos com visão diária e semanal.
 - **Privacidade:** conta individual, sincronização na nuvem e políticas de acesso por usuário via Supabase.
 - **Custo:** priorizar ferramentas gratuitas e evitar serviços pagos obrigatórios.
+- **MindArt Voice:** captura manual de até 30 segundos, classificação sugerida e alternativa por teclado.
+- **MindArt One Touch:** atalhos para tarefas, gastos, compromissos e MindArt Voice.
+- **MindArt Academy:** microaulas curtas com quizzes e progresso salvo.
+- **MindArt Rewards:** MindPoints e marcos simbólicos sem compra, sequência diária ou perda de pontos.
+- **MindArt Saúde:** registros pessoais de alimentação, horários, medicamentos, consultas e procedimentos.
 
 ## Plano de entrega
 
@@ -32,3 +37,9 @@ O código já inclui o fluxo opcional de conta Supabase, migração dos dados lo
 O app precisa de internet para carregar; o armazenamento local permite continuar registrando dados temporariamente sem conexão, e a sincronização volta quando a conexão retorna e um registro é salvo. Esta entrega é uma web app e não aparece na App Store. Uma versão nativa para a App Store requer acesso a macOS e Xcode.
 
 Veja [BACKLOG.md](BACKLOG.md) para as etapas detalhadas.
+
+## MindArt 000 — Founder Edition
+
+A identidade da interface usa preto, dourado e branco. Os módulos novos são aditivos ao snapshot JSON já protegido por RLS e sincronizado por conta; os backups antigos continuam válidos. Nenhuma tabela ou registro Supabase existente foi removido ou alterado. Para detalhes técnicos, privacidade e validação, consulte [FOUNDER_EDITION.md](FOUNDER_EDITION.md).
+
+O Voice só solicita acesso ao reconhecimento de fala após a pessoa tocar em **Continuar com voz**. A fala pode ser processada pelo serviço do aparelho/navegador; por isso o app recomenda não ditar informações financeiras, de saúde ou senhas. O reconhecimento depende do navegador/dispositivo. Se ele não estiver disponível, use a ditagem do teclado ou digite o registro.

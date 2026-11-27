@@ -28,11 +28,23 @@ jobs:
           node --check web/notifications_bridge.js
           node --check web/mindart-push-sw.js
       - name: Compile web
-        run: flutter build web --release --base-href /mindart-assistente/
+        env:
+          SUPABASE_PUBLIC_KEY: 'sb_publishable_LFxN3uDYFCfZuVlmdE-V0Q_ZkGM_kd5'
+          VAPID_PUBLIC_KEY: 'BJbQPOA_nvnLmRbmJGl_SZ8LNIbXvBx5p0pCXdCdrw7uz1or_vzocfW8-9s2a5grArGcmctBb_hJ3PTMg0Eci4E'
+        run: |
+          flutter build web --release --base-href /mindart-assistente/preview/ \
+            --dart-define=SUPABASE_URL=https://uexogtqyobfuuzserqpp.supabase.co \
+            "--dart-define=SUPABASE_PUBLISHABLE_KEY=$SUPABASE_PUBLIC_KEY" \
+            "--dart-define=VAPID_PUBLIC_KEY=$VAPID_PUBLIC_KEY"
       - name: Verify PWA Push assets
         run: |
           test -f build/web/mindart-push-sw.js
           test -f build/web/notifications_bridge.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mindart-founder-preview
+          path: build/web
+          retention-days: 1
 
   edge-check:
     runs-on: ubuntu-latest
@@ -43,3 +55,38 @@ jobs:
           deno-version: v2.x
       - name: Typecheck reminder Edge Function
         run: deno check supabase/functions/mindart-dispatch-reminders/index.ts
+
+  deploy-preview:
+    needs: [flutter-checks, edge-check]
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'feature/mindart-000-founder-edition'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: mindart-founder-preview
+          path: build/web
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: publish
+          persist-credentials: true
+      - name: Add preview files without replacing production
+        run: |
+          rm -rf publish/docs/preview
+          mkdir -p publish/docs/preview
+          cp -a build/web/. publish/docs/preview/
+          touch publish/docs/.nojekyll
+          git -C publish config user.name "github-actions[bot]"
+          git -C publish config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C publish add -A docs/preview
+          if git -C publish diff --cached --quiet; then
+            echo "Preview is already current"
+          else
+            git -C publish commit -m "Publish MindArt Founder validation preview"
+            git -C publish push origin HEAD:main
+          fi

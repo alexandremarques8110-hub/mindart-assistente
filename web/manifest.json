@@ -1,11 +1,11 @@
 {
-    "name": "MindArt — Assistente pessoal",
+    "name": "MindArt 000 — Founder Edition",
     "short_name": "MindArt",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#F5F7F5",
-    "theme_color": "#167C80",
-    "description": "Seu assistente pessoal para projetos, finanças e rotina.",
+    "background_color": "#0F0F0F",
+    "theme_color": "#0F0F0F",
+    "description": "Um lugar leve para organizar tarefas, projetos, saúde, aprendizado e rotina.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
