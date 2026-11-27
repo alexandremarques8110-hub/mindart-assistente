@@ -1,5 +1,39 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+
+String mergeVoiceTranscript(String current, String recognizedSegment) {
+  final existing = current.trim();
+  final segment = recognizedSegment.trim();
+  if (existing.isEmpty) return segment;
+  if (segment.isEmpty) return existing;
+  if (segment.toLowerCase().startsWith(existing.toLowerCase())) {
+    return segment;
+  }
+
+  final previousWords = existing.split(RegExp(r'\s+'));
+  final nextWords = segment.split(RegExp(r'\s+'));
+  final maxOverlap = previousWords.length < nextWords.length
+      ? previousWords.length
+      : nextWords.length;
+  var overlap = 0;
+  for (var length = maxOverlap; length > 0; length--) {
+    final previousTail = previousWords.skip(previousWords.length - length);
+    final nextHead = nextWords.take(length);
+    final matches = previousTail
+        .map((word) => word.toLowerCase().replaceAll(RegExp(r'^[,.;:!?]+|[,.;:!?]+$'), ''))
+        .join(' ');
+    final candidate = nextHead
+        .map((word) => word.toLowerCase().replaceAll(RegExp(r'^[,.;:!?]+|[,.;:!?]+$'), ''))
+        .join(' ');
+    if (matches == candidate) {
+      overlap = length;
+      break;
+    }
+  }
+  return '$existing ${nextWords.skip(overlap).join(' ')}'.trim();
+}
 
 class VoiceEntry {
   VoiceEntry(this.text, this.category, {DateTime? createdAt})
@@ -123,6 +157,8 @@ class _MindArtHubState extends State<MindArtHub> {
 
   final SpeechToText _speech = SpeechToText();
   final ValueNotifier<bool> _listening = ValueNotifier(false);
+  final ValueNotifier<String?> _voiceError = ValueNotifier(null);
+  Completer<void>? _speechStopped;
   bool _speechAvailable = false;
   bool _speechInitialized = false;
   bool _voicePrivacyConfirmed = false;
@@ -139,13 +175,22 @@ class _MindArtHubState extends State<MindArtHub> {
     if (_speechInitialized) return _speechAvailable;
     try {
       final available = await _speech.initialize(
+        finalTimeout: const Duration(seconds: 5),
         onStatus: (status) {
           if (!mounted) return;
           _listening.value = status == 'listening';
+          if (status == 'done' || status == 'notListening') {
+            final stopped = _speechStopped;
+            if (stopped != null && !stopped.isCompleted) stopped.complete();
+          }
         },
         onError: (_) {
           if (!mounted) return;
           _listening.value = false;
+          _voiceError.value =
+              'A fala não foi reconhecida. Confira a permissão do microfone e tente novamente.';
+          final stopped = _speechStopped;
+          if (stopped != null && !stopped.isCompleted) stopped.complete();
         },
       );
       _speechInitialized = true;
@@ -158,6 +203,47 @@ class _MindArtHubState extends State<MindArtHub> {
       if (mounted) setState(() {});
       return false;
     }
+  }
+
+  Future<String?> _portugueseLocaleId() async {
+    try {
+      final locales = await _speech.locales();
+      final brazilian = locales.where((locale) {
+        final id = locale.localeId.toLowerCase().replaceAll('_', '-');
+        return id == 'pt-br';
+      });
+      if (brazilian.isNotEmpty) return brazilian.first.localeId;
+      final portuguese = locales.where(
+        (locale) => locale.localeId.toLowerCase().startsWith('pt'),
+      );
+      if (portuguese.isNotEmpty) return portuguese.first.localeId;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _stopVoiceAndWaitForResult() async {
+    if (!_listening.value && !_speech.isListening) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      return;
+    }
+    final stopped = Completer<void>();
+    _speechStopped = stopped;
+    try {
+      await _speech.stop();
+    } catch (_) {
+      // Still wait briefly for a final recognition callback from the platform.
+    }
+    try {
+      await stopped.future.timeout(const Duration(seconds: 5));
+    } on TimeoutException {
+      // Some browser recognizers stop without sending a final status event.
+    } finally {
+      if (identical(_speechStopped, stopped)) _speechStopped = null;
+    }
+    // Let the final onResult callback update the text field before saving it.
+    await Future<void>.delayed(const Duration(milliseconds: 250));
   }
 
   String _classify(String text) {
@@ -240,11 +326,12 @@ class _MindArtHubState extends State<MindArtHub> {
                         ? null
                         : () async {
                             if (isListening) {
-                              await _speech.stop();
+                              await _stopVoiceAndWaitForResult();
                               return;
                             }
                             try {
                               setDialogState(() => saving = true);
+                              _voiceError.value = null;
                               if (!await _confirmVoicePrivacy()) return;
                               final available = await _initializeSpeech();
                               if (!available) {
@@ -257,16 +344,29 @@ class _MindArtHubState extends State<MindArtHub> {
                                 }
                                 return;
                               }
+                              final localeId = await _portugueseLocaleId();
+                              final prefixAtSessionStart = controller.text.trim();
                               await _speech.listen(
                                 onResult: (result) {
-                                  controller.text = result.recognizedWords;
+                                  final recognized = result.recognizedWords.trim();
+                                  if (recognized.isEmpty) return;
+                                  final transcript = mergeVoiceTranscript(
+                                    prefixAtSessionStart,
+                                    recognized,
+                                  );
+                                  controller.value = TextEditingValue(
+                                    text: transcript,
+                                    selection: TextSelection.collapsed(
+                                      offset: transcript.length,
+                                    ),
+                                  );
                                   category = _classify(controller.text);
-                                  setDialogState(() {});
+                                  if (context.mounted) setDialogState(() {});
                                 },
                                 listenOptions: SpeechListenOptions(
-                                  localeId: 'pt_BR',
-                                  listenFor: const Duration(seconds: 30),
-                                  pauseFor: const Duration(seconds: 3),
+                                  localeId: localeId,
+                                  listenFor: const Duration(seconds: 60),
+                                  pauseFor: const Duration(seconds: 8),
                                   listenMode: ListenMode.dictation,
                                 ),
                               );
@@ -277,15 +377,23 @@ class _MindArtHubState extends State<MindArtHub> {
                     icon: Icon(isListening ? Icons.stop : Icons.mic_none),
                     label: Text(isListening
                         ? 'Parar gravação'
-                        : 'Falar por até 30 segundos'),
+                        : 'Falar por até 1 minuto'),
                   ),
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  _speechAvailable
-                      ? 'A voz pode ser processada pelo serviço do aparelho ou navegador. Não diga informações sensíveis.'
-                      : 'Prefira a digitação do teclado para manter informações sensíveis fora do reconhecimento de fala.',
-                  style: Theme.of(context).textTheme.bodySmall,
+                ValueListenableBuilder<String?>(
+                  valueListenable: _voiceError,
+                  builder: (context, error, _) => Text(
+                    error ??
+                        (_speechAvailable
+                            ? 'Toque em Parar gravação ou Salvar registro para finalizar. A voz pode ser processada pelo aparelho ou navegador; não diga dados sensíveis.'
+                            : 'Prefira a digitação do teclado para manter informações sensíveis fora do reconhecimento de fala.'),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: error == null
+                              ? null
+                              : Theme.of(context).colorScheme.error,
+                        ),
+                  ),
                 ),
                 if (controller.text.trim().isNotEmpty) ...[
                   const SizedBox(height: 12),
@@ -302,21 +410,30 @@ class _MindArtHubState extends State<MindArtHub> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
+              onPressed: saving
+                  ? null
+                  : () => Navigator.pop(dialogContext, false),
               child: const Text('Cancelar'),
             ),
             FilledButton(
-              onPressed: () {
-                if (controller.text.trim().isEmpty) return;
-                Navigator.pop(dialogContext, true);
-              },
-              child: const Text('Salvar registro'),
+              onPressed: saving || controller.text.trim().isEmpty
+                  ? null
+                  : () async {
+                      if (controller.text.trim().isEmpty) return;
+                      setDialogState(() => saving = true);
+                      await _stopVoiceAndWaitForResult();
+                      if (!dialogContext.mounted) return;
+                      Navigator.pop(dialogContext, true);
+                    },
+              child: Text(saving ? 'Finalizando fala…' : 'Salvar registro'),
             ),
           ],
         ),
       ),
     );
-    await _speech.stop();
+    if (result != true) {
+      await _speech.cancel();
+    }
     if (result == true && controller.text.trim().isNotEmpty) {
       final entry = VoiceEntry(
         controller.text.trim(),
@@ -502,8 +619,9 @@ class _MindArtHubState extends State<MindArtHub> {
 
   @override
   void dispose() {
-    _speech.stop();
+    _speech.cancel();
     _listening.dispose();
+    _voiceError.dispose();
     super.dispose();
   }
 
