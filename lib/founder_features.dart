@@ -86,7 +86,7 @@ VoiceIntent classifyVoiceIntent(String text, {DateTime? now}) {
   final reference = now ?? DateTime.now();
   final normalized = _normalizeVoiceText(text);
   final foodWords = RegExp(r'\b(almoco|almocar|jantar|cafe da manha|lanche|refeicao|alimentacao|comer)\b');
-  final spendingWords = RegExp(r'\b(gastei|paguei|comprei|compra|despesa|custou|pagar|gasto)\b');
+  final spendingWords = RegExp(r'\b(gastei|paguei|comprei|compra|despesa|custou|pagar|gastos?)\b');
   final healthWords = RegExp(r'\b(remedio|medicamento|consulta|medico|saude|exame|alimentacao|refeicao|almoco|jantar|lanche)\b');
   final hasExplicitMoney = RegExp(r'r\$\s*\d|\d+[,.]?\d*\s*reais?\b').hasMatch(normalized) ||
       (spendingWords.hasMatch(normalized) && RegExp(r'\b\d+[,.]?\d*\b').hasMatch(normalized));
