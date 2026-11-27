@@ -3,7 +3,8 @@
 ## Escopo entregue na branch
 
 - Identidade preto, dourado e branco no tema claro/escuro, ícone PWA e metadados do app.
-- **MindArt Voice:** captura de fala iniciada pelo usuário, limite curto de 30 segundos, transcrição editável, classificação heurística sugerida (Saúde, Finanças, Ideia, Tarefa ou Nota), lista de registros e exclusão individual.
+- **MindArt Voice:** captura de fala iniciada pelo usuário por até 60 segundos, transcrição editável, classificação heurística sugerida (Saúde, Finanças, Ideia, Tarefa ou Nota), lista de registros e exclusão individual.
+- Ajuste do fluxo de voz: seleção do locale português disponível no aparelho, pausas de até 8 segundos, preservação do texto ao retomar uma sessão interrompida e espera pelo resultado final antes de salvar.
 - **MindArt One Touch:** botões de ação rápida para tarefa, gasto, compromisso e abertura do Voice.
 - **MindArt Academy:** quatro microaulas agrupadas em três trilhas, quiz por aula e progresso persistido.
 - **MindArt Rewards:** MindPoints derivados das aulas e quizzes concluídos; conquistas simbólicas, sem compras, sequências, punição por pausa ou notificações.
@@ -20,7 +21,7 @@ Os registros continuam armazenados no cache local existente do app e, quando a c
 
 A prévia web de validação está em uma rota separada, mas usa o projeto Supabase de produção existente. A tela de entrada foi verificada; após entrar, qualquer registro criado pelo Usuário 000 será persistido na conta real e sincronizado como de costume. A URL deixa a tela de login publicamente carregável; o acesso aos dados continua sob Supabase Auth e RLS. Nenhum registro de teste foi inserido ou removido durante esta publicação.
 
-O reconhecimento de voz pode usar os serviços de fala do dispositivo/navegador e não deve receber senhas, dados financeiros ou informações de saúde. A permissão é pedida apenas depois da confirmação da pessoa. O plugin funciona em iOS/Android e navegadores compatíveis; nem todo navegador oferece Web Speech. A digitação normal e a ditagem do teclado continuam disponíveis como alternativa.
+O reconhecimento de voz pode usar os serviços de fala do dispositivo/navegador e não deve receber senhas, dados financeiros ou informações de saúde. A permissão é pedida apenas depois da confirmação da pessoa. O plugin funciona em iOS/Android e navegadores compatíveis; nem todo navegador oferece Web Speech. O sistema operacional ou o navegador ainda pode encerrar a escuta antes do limite solicitado. A digitação normal e a ditagem do teclado continuam disponíveis como alternativa.
 
 MindPoints não têm valor monetário e não podem ser comprados. Não há contador de sequência nem perda de pontos por inatividade, seguindo a diretriz de facilitar a vida sem incentivar dependência digital.
 
@@ -29,7 +30,7 @@ MindPoints não têm valor monetário e não podem ser comprados. Não há conta
 - Branch de preservação: `backup/main-2026-11-27`.
 - Branch de desenvolvimento: `feature/mindart-000-founder-edition`.
 - Comandos do workflow: `flutter pub get`, `flutter analyze`, `flutter test`, checagem dos scripts JavaScript e `flutter build web --release --base-href /mindart-assistente/preview/`.
-- Estado dos testes e do build: aprovado no workflow `MindArt quality` #45 (commit `9bbe8b1`): análise estática, testes unitários, JavaScript, build PWA e verificação dos assets. O job de verificação da Edge Function Supabase também passou. A publicação da prévia completou com sucesso.
+- Estado dos testes e do build: aprovado no workflow `MindArt quality` #47 (commit `2017a74`): análise estática, testes unitários (incluindo retomada/união de segmentos Voice), JavaScript, build PWA e verificação dos assets. O job de verificação da Edge Function Supabase também passou. A prévia foi recompilada e publicada.
 - Link de validação do Usuário 000: https://alexandremarques8110-hub.github.io/mindart-assistente/preview/ (tela de entrada verificada; autenticação necessária para abrir o app).
 - PR para revisão do Usuário 000: https://github.com/alexandremarques8110-hub/mindart-assistente/pull/4.
 - A página existente na raiz permaneceu no lugar. O workflow acrescentou apenas o build compilado em `docs/preview`; o código da aplicação continua na branch de desenvolvimento, sem merge no `main`.
