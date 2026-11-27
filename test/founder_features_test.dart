@@ -54,5 +54,38 @@ void main() {
 
       expect(restored.category, 'Nota');
     });
+
+    test('voice routes a spoken gym action to a priority task', () {
+      final intent = classifyVoiceIntent('Ir à academia');
+
+      expect(intent.category, 'Tarefa');
+      expect(intent.scheduledAt, isNull);
+    });
+
+    test('voice detects a financial amount without losing its category', () {
+      final intent = classifyVoiceIntent('Paguei o almoço R\$ 32,50');
+
+      expect(intent.category, 'Finanças');
+      expect(intent.expenseAmount, 32.5);
+    });
+
+    test('voice captures an explicit time for an appointment reminder', () {
+      final now = DateTime(2026, 11, 27, 10);
+      final intent = classifyVoiceIntent(
+        'Ir à academia amanhã às 18',
+        now: now,
+      );
+
+      expect(intent.category, 'Tarefa');
+      expect(intent.scheduledAt, DateTime(2026, 11, 28, 18));
+      expect(intent.dueDate, DateTime(2026, 11, 28));
+    });
+
+    test('voice keeps a finance note out of expense totals without an amount', () {
+      final intent = classifyVoiceIntent('Gastos do almoço');
+
+      expect(intent.category, 'Finanças');
+      expect(intent.expenseAmount, isNull);
+    });
   });
 }

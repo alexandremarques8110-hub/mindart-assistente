@@ -56,6 +56,112 @@ class VoiceEntry {
       );
 }
 
+class VoiceIntent {
+  const VoiceIntent({
+    required this.category,
+    required this.title,
+    this.dueDate,
+    this.scheduledAt,
+    this.expenseAmount,
+  });
+
+  final String category;
+  final String title;
+  final DateTime? dueDate;
+  final DateTime? scheduledAt;
+  final double? expenseAmount;
+}
+
+String _normalizeVoiceText(String text) => text.toLowerCase()
+    .replaceAll(RegExp('[áàãâ]'), 'a')
+    .replaceAll(RegExp('[éê]'), 'e')
+    .replaceAll(RegExp('[í]'), 'i')
+    .replaceAll(RegExp('[óôõ]'), 'o')
+    .replaceAll(RegExp('[ú]'), 'u')
+    .replaceAll('ç', 'c');
+
+/// Extracts only clear actions, amounts and times. Ambiguous speech remains a
+/// categorized note instead of creating a guessed financial value or schedule.
+VoiceIntent classifyVoiceIntent(String text, {DateTime? now}) {
+  final reference = now ?? DateTime.now();
+  final normalized = _normalizeVoiceText(text);
+  final foodWords = RegExp(r'\b(almoco|almocar|jantar|cafe da manha|lanche|refeicao|alimentacao|comer)\b');
+  final spendingWords = RegExp(r'\b(gastei|paguei|comprei|compra|despesa|custou|pagar|gasto)\b');
+  final healthWords = RegExp(r'\b(remedio|medicamento|consulta|medico|saude|exame|alimentacao|refeicao|almoco|jantar|lanche)\b');
+  final hasExplicitMoney = RegExp(r'r\$\s*\d|\d+[,.]?\d*\s*reais?\b').hasMatch(normalized) ||
+      (spendingWords.hasMatch(normalized) && RegExp(r'\b\d+[,.]?\d*\b').hasMatch(normalized));
+
+  double? amount;
+  final moneyMatch = RegExp(r'r\$\s*(\d+(?:[.,]\d{1,2})?)|\b(\d+(?:[.,]\d{1,2})?)\s*reais?\b').firstMatch(normalized);
+  final genericAmount = moneyMatch == null && hasExplicitMoney
+      ? RegExp(r'\b(\d+(?:[.,]\d{1,2})?)\b').firstMatch(normalized)
+      : null;
+  final rawAmount = moneyMatch?.group(1) ?? moneyMatch?.group(2) ?? genericAmount?.group(1);
+  if (rawAmount != null) amount = double.tryParse(rawAmount.replaceAll(',', '.'));
+
+  DateTime? date;
+  if (RegExp(r'\bamanha\b').hasMatch(normalized)) {
+    date = DateTime(reference.year, reference.month, reference.day + 1);
+  } else if (RegExp(r'\bhoje\b').hasMatch(normalized)) {
+    date = DateTime(reference.year, reference.month, reference.day);
+  } else {
+    final explicitDate = RegExp(r'\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b').firstMatch(normalized);
+    if (explicitDate != null) {
+      final yearText = explicitDate.group(3);
+      final year = yearText == null
+          ? reference.year
+          : int.parse(yearText.length == 2 ? '20$yearText' : yearText);
+      final month = int.parse(explicitDate.group(2)!);
+      final day = int.parse(explicitDate.group(1)!);
+      if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+        date = DateTime(year, month, day);
+        if (date.month != month || date.day != day) date = null;
+      }
+    }
+  }
+  final timeMatch = RegExp(r'(?:\b(?:as|pelas|por volta das)\s+)?(\d{1,2})(?::(\d{2})|h(\d{2})?|\s*horas?)?\b').firstMatch(normalized);
+  final hasTime = timeMatch != null && RegExp(
+    r'\b(?:as|pelas|por volta das)\s+\d{1,2}|\d{1,2}:\d{2}|\d{1,2}\s*h|\d{1,2}\s*horas?\b|\bamanha\s+\d{1,2}\b',
+  ).hasMatch(normalized);
+  DateTime? scheduledAt;
+  if (hasTime) {
+    var hour = int.parse(timeMatch!.group(1)!);
+    final minute = int.tryParse(timeMatch.group(2) ?? timeMatch.group(3) ?? '') ?? 0;
+    if (hour < 12 && RegExp(r'\b(tarde|noite)\b').hasMatch(normalized)) {
+      hour += 12;
+    }
+    if (hour <= 23 && minute <= 59) {
+      final day = date ?? DateTime(reference.year, reference.month, reference.day);
+      scheduledAt = DateTime(day.year, day.month, day.day, hour, minute);
+      if (scheduledAt.isBefore(reference) && date == null) {
+        scheduledAt = scheduledAt.add(const Duration(days: 1));
+      }
+    }
+  }
+
+  final isTask = RegExp(r'\b(fazer|preciso|tarefa|lembrar|entregar|resolver|ir|marcar|agendar|tenho que|vou|academia|treino)\b').hasMatch(normalized);
+  final category = spendingWords.hasMatch(normalized) || hasExplicitMoney
+      ? 'Finanças'
+      : healthWords.hasMatch(normalized) || foodWords.hasMatch(normalized)
+          ? 'Saúde'
+          : RegExp(r'\b(ideia|projeto|pensei|imagino|criar)\b').hasMatch(normalized)
+              ? 'Ideia'
+              : isTask
+                  ? 'Tarefa'
+                  : 'Nota';
+  final title = text.trim().replaceFirst(
+    RegExp(r'^(?:eu\s+)?(?:preciso\s+)?(?:lembrar\s+de\s+|tenho\s+que\s+|vou\s+|quero\s+)?', caseSensitive: false),
+    '',
+  );
+  return VoiceIntent(
+    category: category,
+    title: title.isEmpty ? text.trim() : title,
+    dueDate: date,
+    scheduledAt: scheduledAt,
+    expenseAmount: category == 'Finanças' ? amount : null,
+  );
+}
+
 class HealthEntry {
   HealthEntry(this.title, this.kind, this.details, this.scheduledAt);
 
@@ -87,6 +193,7 @@ class MindArtHub extends StatefulWidget {
     required this.completedLessons,
     required this.passedQuizzes,
     required this.onVoiceEntriesChanged,
+    required this.onVoiceEntryCreated,
     required this.onHealthEntriesChanged,
     required this.onCompletedLessonsChanged,
     required this.onPassedQuizzesChanged,
@@ -98,6 +205,8 @@ class MindArtHub extends StatefulWidget {
   final Set<String> completedLessons;
   final Set<String> passedQuizzes;
   final ValueChanged<List<VoiceEntry>> onVoiceEntriesChanged;
+  final Future<void> Function(VoiceEntry entry, VoiceIntent intent)
+      onVoiceEntryCreated;
   final ValueChanged<List<HealthEntry>> onHealthEntriesChanged;
   final ValueChanged<Set<String>> onCompletedLessonsChanged;
   final ValueChanged<Set<String>> onPassedQuizzesChanged;
@@ -247,23 +356,7 @@ class _MindArtHubState extends State<MindArtHub> {
   }
 
   String _classify(String text) {
-    final normalized = text.toLowerCase()
-        .replaceAll(RegExp('[áàãâ]'), 'a')
-        .replaceAll(RegExp('[éê]'), 'e')
-        .replaceAll(RegExp('[í]'), 'i')
-        .replaceAll(RegExp('[óôõ]'), 'o')
-        .replaceAll(RegExp('[ú]'), 'u')
-        .replaceAll('ç', 'c');
-    if (RegExp(r'\b(remedio|medicamento|consulta|medico|saude|refeicao|alimentacao|exame)\b')
-        .hasMatch(normalized)) return 'Saúde';
-    if (RegExp(r'\b(gastei|paguei|comprar|compra|conta|reais|dinheiro|despesa)\b')
-        .hasMatch(normalized)) return 'Finanças';
-    if (RegExp(r'\b(ideia|projeto|pensei|imagino|criar)\b').hasMatch(normalized)) {
-      return 'Ideia';
-    }
-    if (RegExp(r'\b(fazer|preciso|tarefa|lembrar|entregar|resolver)\b')
-        .hasMatch(normalized)) return 'Tarefa';
-    return 'Nota';
+    return classifyVoiceIntent(text).category;
   }
 
   Future<bool> _confirmVoicePrivacy() async {
@@ -435,11 +528,9 @@ class _MindArtHubState extends State<MindArtHub> {
       await _speech.cancel();
     }
     if (result == true && controller.text.trim().isNotEmpty) {
-      final entry = VoiceEntry(
-        controller.text.trim(),
-        category ?? _classify(controller.text),
-      );
-      widget.onVoiceEntriesChanged([entry, ...widget.voiceEntries]);
+      final intent = classifyVoiceIntent(controller.text);
+      final entry = VoiceEntry(controller.text.trim(), category ?? intent.category);
+      await widget.onVoiceEntryCreated(entry, intent);
     }
     controller.dispose();
   }

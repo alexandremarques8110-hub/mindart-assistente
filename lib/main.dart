@@ -556,18 +556,22 @@ class ExpenseItem {
 }
 
 class RoutineEvent {
-  RoutineEvent(this.title, this.startsAt);
+  RoutineEvent(this.title, this.startsAt, {this.reminderMinutesBefore = 15});
   String title;
   DateTime startsAt;
+  int reminderMinutesBefore;
 
   Map<String, Object?> toJson() => {
         'title': title,
         'startsAt': startsAt.toIso8601String(),
+        'reminderMinutesBefore': reminderMinutesBefore,
       };
 
   factory RoutineEvent.fromJson(Map<String, dynamic> json) => RoutineEvent(
         json['title'] as String,
         DateTime.parse(json['startsAt'] as String),
+        reminderMinutesBefore:
+            json['reminderMinutesBefore'] as int? ?? 15,
       );
 }
 
@@ -699,18 +703,30 @@ class _HomeShellState extends State<HomeShell> {
       }
     }
     try {
-      var savedTasks = await _storage.getString(_storageKey('tasks'));
-      var savedExpenses = await _storage.getString(_storageKey('expenses'));
-      var savedEvents = await _storage.getString(_storageKey('events'));
-      var savedDebts = await _storage.getString(_storageKey('debts'));
-      var savedGoals = await _storage.getString(_storageKey('savingsGoals'));
-      var savedProjects = await _storage.getString(_storageKey('projects'));
-      var savedVoice = await _storage.getString(_storageKey('voiceEntries'));
-      var savedHealth = await _storage.getString(_storageKey('healthEntries'));
-      var savedLessons = await _storage.getString(_storageKey('completedLessons'));
-      var savedQuizzes = await _storage.getString(_storageKey('passedQuizzes'));
-      final dirtyOffline = cloudStorageEnabled &&
-          (await _storage.getBool(_storageKey('dirty')) ?? false);
+      final localValues = await Future.wait<Object?>([
+        _storage.getString(_storageKey('tasks')),
+        _storage.getString(_storageKey('expenses')),
+        _storage.getString(_storageKey('events')),
+        _storage.getString(_storageKey('debts')),
+        _storage.getString(_storageKey('savingsGoals')),
+        _storage.getString(_storageKey('projects')),
+        _storage.getString(_storageKey('voiceEntries')),
+        _storage.getString(_storageKey('healthEntries')),
+        _storage.getString(_storageKey('completedLessons')),
+        _storage.getString(_storageKey('passedQuizzes')),
+        _storage.getBool(_storageKey('dirty')),
+      ]);
+      var savedTasks = localValues[0] as String?;
+      var savedExpenses = localValues[1] as String?;
+      var savedEvents = localValues[2] as String?;
+      var savedDebts = localValues[3] as String?;
+      var savedGoals = localValues[4] as String?;
+      var savedProjects = localValues[5] as String?;
+      var savedVoice = localValues[6] as String?;
+      var savedHealth = localValues[7] as String?;
+      var savedLessons = localValues[8] as String?;
+      var savedQuizzes = localValues[9] as String?;
+      final dirtyOffline = cloudStorageEnabled && localValues[10] == true;
       if (dirtyOffline && cloudPayload != null && mounted) {
         final preferLocal = await showDialog<bool>(
           context: context,
@@ -1120,15 +1136,101 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Future<void> _saveFounderFeatures() async {
-    await _storage.setString(_storageKey('voiceEntries'),
-        jsonEncode(voiceEntries.map((item) => item.toJson()).toList()));
-    await _storage.setString(_storageKey('healthEntries'),
-        jsonEncode(healthEntries.map((item) => item.toJson()).toList()));
-    await _storage.setString(_storageKey('completedLessons'),
-        jsonEncode(completedLessons.toList()));
-    await _storage.setString(_storageKey('passedQuizzes'),
-        jsonEncode(passedQuizzes.toList()));
+    await Future.wait([
+      _storage.setString(_storageKey('voiceEntries'),
+          jsonEncode(voiceEntries.map((item) => item.toJson()).toList())),
+      _storage.setString(_storageKey('healthEntries'),
+          jsonEncode(healthEntries.map((item) => item.toJson()).toList())),
+      _storage.setString(_storageKey('completedLessons'),
+          jsonEncode(completedLessons.toList())),
+      _storage.setString(_storageKey('passedQuizzes'),
+          jsonEncode(passedQuizzes.toList())),
+    ]);
     await _syncCloudIfReady();
+  }
+
+  Future<void> _routeVoiceEntry(VoiceEntry entry, VoiceIntent intent) async {
+    final category = entry.category;
+    final hasFutureTime = intent.scheduledAt?.isAfter(DateTime.now()) ?? false;
+    final hasExpense = category == 'Finanças' &&
+        (intent.expenseAmount ?? 0) > 0;
+    final createTask = category == 'Tarefa';
+    final createHealthEntry = category == 'Saúde';
+
+    setState(() {
+      voiceEntries.insert(0, entry);
+      if (hasExpense) {
+        final normalized = intent.title.toLowerCase();
+        final expenseCategory = RegExp(r'almo[cç]o|jantar|cafe|lanche')
+                .hasMatch(normalized)
+            ? 'Alimentação'
+            : 'Outros';
+        expenses.insert(0, ExpenseItem(
+          intent.title,
+          expenseCategory,
+          intent.expenseAmount!,
+        ));
+      }
+      if (hasFutureTime) {
+        events.insert(0, RoutineEvent(
+          intent.title,
+          intent.scheduledAt!,
+          reminderMinutesBefore: 0,
+        ));
+      }
+      if (createTask) {
+        tasks.insert(0, TaskItem(
+          intent.title,
+          'Pessoal',
+          _dateLabel(intent.dueDate ?? intent.scheduledAt ?? DateTime.now()),
+          priority: true,
+        ));
+      }
+      if (createHealthEntry) {
+        final normalized = intent.title.toLowerCase();
+        final kind = RegExp(r'almo[cç]o|jantar|cafe|lanche|refei[cç][aã]o')
+                .hasMatch(normalized)
+            ? 'Alimentação'
+            : 'Registro por voz';
+        healthEntries.insert(0, HealthEntry(
+          intent.title,
+          kind,
+          entry.text,
+          intent.scheduledAt ?? entry.createdAt,
+        ));
+      }
+    });
+
+    final writes = <Future<void>>[
+      _storage.setString(_storageKey('voiceEntries'),
+          jsonEncode(voiceEntries.map((item) => item.toJson()).toList())),
+    ];
+    if (hasExpense) {
+      writes.add(_storage.setString(_storageKey('expenses'),
+          jsonEncode(expenses.map((item) => item.toJson()).toList())));
+    }
+    if (hasFutureTime) {
+      writes.add(_storage.setString(_storageKey('events'),
+          jsonEncode(events.map((item) => item.toJson()).toList())));
+    }
+    if (createTask) {
+      writes.add(_storage.setString(_storageKey('tasks'),
+          jsonEncode(tasks.map((item) => item.toJson()).toList())));
+    }
+    if (createHealthEntry) {
+      writes.add(_storage.setString(_storageKey('healthEntries'),
+          jsonEncode(healthEntries.map((item) => item.toJson()).toList())));
+    }
+    await Future.wait(writes);
+    // The on-device record is durable before returning to the voice screen;
+    // network synchronization and reminder registration continue in the background.
+    unawaited(_syncCloudIfReady());
+    if (hasFutureTime) unawaited(_syncReminderSchedule());
+
+    if (mounted && hasFutureTime) {
+      _message(context,
+          'Compromisso salvo para ${_timeLabel(intent.scheduledAt!)}. O aviso depende das notificações estarem ativadas.');
+    }
   }
 
   Map<String, Object?> _cloudSnapshot() => {
@@ -1264,27 +1366,36 @@ class _HomeShellState extends State<HomeShell> {
       final client = Supabase.instance.client;
       final now = DateTime.now();
       final activeKeys = <String>{};
+      final reminders = <Map<String, Object?>>[];
       for (final event in events) {
         if (!event.startsAt.isAfter(now)) continue;
         final key = 'event:${event.title}:${event.startsAt.toIso8601String()}';
         activeKeys.add(key);
-        final remindAt = event.startsAt.subtract(const Duration(minutes: 15));
-        await client.from('mindart_reminders').upsert({
+        final remindAt = event.startsAt.subtract(
+          Duration(minutes: event.reminderMinutesBefore),
+        );
+        reminders.add({
           'user_id': _accountId,
           'item_key': key,
           'remind_at': remindAt.toUtc().toIso8601String(),
-        }, onConflict: 'user_id,item_key');
+        });
+      }
+      if (reminders.isNotEmpty) {
+        await client.from('mindart_reminders').upsert(
+              reminders,
+              onConflict: 'user_id,item_key',
+            );
       }
       final pending = await client.from('mindart_reminders')
           .select('id,item_key')
           .eq('user_id', _accountId)
           .isFilter('sent_at', null);
-      for (final record in pending) {
-        final key = record['item_key'] as String;
-        if (!activeKeys.contains(key)) {
-          await client.from('mindart_reminders')
-              .delete().eq('id', record['id']);
-        }
+      final staleIds = pending
+          .where((record) => !activeKeys.contains(record['item_key'] as String))
+          .map((record) => record['id'])
+          .toList();
+      if (staleIds.isNotEmpty) {
+        await client.from('mindart_reminders').delete().inFilter('id', staleIds);
       }
     } catch (_) {
       // The local agenda remains available when the server is unreachable.
@@ -1439,6 +1550,7 @@ class _HomeShellState extends State<HomeShell> {
           voiceEntries..clear()..addAll(items);
           unawaited(_saveFounderFeatures());
         }),
+        onVoiceEntryCreated: _routeVoiceEntry,
         onHealthEntriesChanged: (items) => setState(() {
           healthEntries..clear()..addAll(items);
           unawaited(_saveFounderFeatures());
@@ -1692,6 +1804,16 @@ class _HomeShellState extends State<HomeShell> {
                 'Toque em Nova tarefa e marque o que é prioridade.')
           else
             ...focus.map(_taskTile),
+          if (voiceEntries.isNotEmpty) ...[
+            const SizedBox(height: 22),
+            _sectionTitle(
+              'Registros recentes',
+              'Abrir Voice',
+              () => setState(() => selected = 4),
+            ),
+            const SizedBox(height: 8),
+            ...voiceEntries.take(3).map(_recentVoiceTile),
+          ],
           const SizedBox(height: 12),
           Text(
             'Dica: abra as opções de uma tarefa para destacar ou retirar a estrela.',
@@ -1839,6 +1961,23 @@ class _HomeShellState extends State<HomeShell> {
             style: TextStyle(fontWeight: FontWeight.w800),
           ),
           subtitle: Text(_eventDate(event.startsAt)),
+          trailing: const Icon(Icons.chevron_right),
+        ),
+      );
+
+  Widget _recentVoiceTile(VoiceEntry entry) => Card(
+        child: ListTile(
+          onTap: () => setState(() => selected = 4),
+          leading: Icon(
+            Icons.mic_none,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          title: Text(
+            entry.text,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text('${entry.category} · ${_eventDate(entry.createdAt)}'),
           trailing: const Icon(Icons.chevron_right),
         ),
       );
@@ -2026,6 +2165,23 @@ class _HomeShellState extends State<HomeShell> {
                   ),
                 ),
               )),
+          if (voiceEntries.any((entry) => entry.category == 'Finanças')) ...[
+            const SizedBox(height: 18),
+            _sectionTitle('Anotações financeiras por voz', null, null),
+            const SizedBox(height: 8),
+            ...voiceEntries
+                .where((entry) => entry.category == 'Finanças')
+                .take(5)
+                .map((entry) => Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.mic_none),
+                        title: Text(entry.text),
+                        subtitle: Text(
+                          'Anotação por voz · ${_eventDate(entry.createdAt)}',
+                        ),
+                      ),
+                    )),
+          ],
         ],
       );
 
