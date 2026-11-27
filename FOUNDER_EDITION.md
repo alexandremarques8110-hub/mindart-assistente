@@ -27,8 +27,9 @@ MindPoints não têm valor monetário e não podem ser comprados. Não há conta
 - Branch de preservação: `backup/main-2026-11-27`.
 - Branch de desenvolvimento: `feature/mindart-000-founder-edition`.
 - Comandos do workflow: `flutter pub get`, `flutter analyze`, `flutter test` e `flutter build web --release --base-href /mindart-assistente/`.
-- Estado dos testes e do build: pendente da execução do workflow de CI nesta branch.
-- A página de produção existente não foi substituída por esta alteração. A prévia do código e o resultado do CI ficam no pull request de validação.
+- Estado dos testes e do build: aprovado no workflow `MindArt quality` #43 (commit `69c99f2`): `flutter analyze`, testes unitários, checagem dos scripts JavaScript, build web e verificação dos assets PWA. O job de verificação da Edge Function Supabase também passou.
+- PR para revisão do Usuário 000: https://github.com/alexandremarques8110-hub/mindart-assistente/pull/4.
+- A página de produção existente não foi substituída. A PR contém o código para validação, e a versão de teste ainda não foi publicada num URL executável.
 
 ## Próximas etapas para uso
 
