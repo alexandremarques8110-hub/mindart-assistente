@@ -18,6 +18,8 @@ As novas listas são campos opcionais no payload existente de `mindart_user_data
 
 Os registros continuam armazenados no cache local existente do app e, quando a conta está configurada, na linha Supabase do próprio usuário. O cache local usa `SharedPreferences`, que não fornece criptografia em repouso. Os detalhes de Saúde são dados pessoais: use somente em dispositivo e conta protegidos. Nenhum conteúdo de saúde é enviado nas notificações do app.
 
+A prévia web de validação está em uma rota separada, mas usa o projeto Supabase de produção existente. A tela de entrada foi verificada; após entrar, qualquer registro criado pelo Usuário 000 será persistido na conta real e sincronizado como de costume. A URL deixa a tela de login publicamente carregável; o acesso aos dados continua sob Supabase Auth e RLS. Nenhum registro de teste foi inserido ou removido durante esta publicação.
+
 O reconhecimento de voz pode usar os serviços de fala do dispositivo/navegador e não deve receber senhas, dados financeiros ou informações de saúde. A permissão é pedida apenas depois da confirmação da pessoa. O plugin funciona em iOS/Android e navegadores compatíveis; nem todo navegador oferece Web Speech. A digitação normal e a ditagem do teclado continuam disponíveis como alternativa.
 
 MindPoints não têm valor monetário e não podem ser comprados. Não há contador de sequência nem perda de pontos por inatividade, seguindo a diretriz de facilitar a vida sem incentivar dependência digital.
@@ -26,13 +28,14 @@ MindPoints não têm valor monetário e não podem ser comprados. Não há conta
 
 - Branch de preservação: `backup/main-2026-11-27`.
 - Branch de desenvolvimento: `feature/mindart-000-founder-edition`.
-- Comandos do workflow: `flutter pub get`, `flutter analyze`, `flutter test` e `flutter build web --release --base-href /mindart-assistente/`.
-- Estado dos testes e do build: aprovado no workflow `MindArt quality` #43 (commit `69c99f2`): `flutter analyze`, testes unitários, checagem dos scripts JavaScript, build web e verificação dos assets PWA. O job de verificação da Edge Function Supabase também passou.
+- Comandos do workflow: `flutter pub get`, `flutter analyze`, `flutter test`, checagem dos scripts JavaScript e `flutter build web --release --base-href /mindart-assistente/preview/`.
+- Estado dos testes e do build: aprovado no workflow `MindArt quality` #45 (commit `9bbe8b1`): análise estática, testes unitários, JavaScript, build PWA e verificação dos assets. O job de verificação da Edge Function Supabase também passou. A publicação da prévia completou com sucesso.
+- Link de validação do Usuário 000: https://alexandremarques8110-hub.github.io/mindart-assistente/preview/ (tela de entrada verificada; autenticação necessária para abrir o app).
 - PR para revisão do Usuário 000: https://github.com/alexandremarques8110-hub/mindart-assistente/pull/4.
-- A página de produção existente não foi substituída. A PR contém o código para validação, e a versão de teste ainda não foi publicada num URL executável.
+- A página existente na raiz permaneceu no lugar. O workflow acrescentou apenas o build compilado em `docs/preview`; o código da aplicação continua na branch de desenvolvimento, sem merge no `main`.
 
 ## Próximas etapas para uso
 
 1. Validar o fluxo Voice no Safari/iPhone e num navegador Chromium com reconhecimento de fala.
 2. Revisar os novos campos com dados de teste e confirmar a sincronização em dois dispositivos da conta Usuário 000.
-3. Depois da validação, publicar a web app de teste pelo fluxo autorizado de release. A versão iOS da App Store requer assinatura e compilação num Mac com Xcode.
+3. Após validar, planejar o fluxo de release aprovado pelo idealizador. A versão iOS nativa da App Store requer assinatura e compilação num Mac com Xcode.
