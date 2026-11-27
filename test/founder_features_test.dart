@@ -3,6 +3,23 @@ import 'package:mindart/founder_features.dart';
 
 void main() {
   group('MindArt Founder Edition records', () {
+    test('voice segments append and remove duplicated boundary words', () {
+      expect(
+        mergeVoiceTranscript(
+          'Preciso marcar a consulta',
+          'consulta amanhã',
+        ),
+        'Preciso marcar a consulta amanhã',
+      );
+    });
+
+    test('a corrected recognition replaces its matching prefix', () {
+      expect(
+        mergeVoiceTranscript('Preciso marcar', 'Preciso marcar consulta'),
+        'Preciso marcar consulta',
+      );
+    });
+
     test('voice entry keeps text, classification and timestamp', () {
       final createdAt = DateTime(2026, 11, 27, 12, 30);
       final entry = VoiceEntry('Marcar consulta', 'Saúde', createdAt: createdAt);
