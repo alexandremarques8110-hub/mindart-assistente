@@ -48,3 +48,4 @@ MindPoints não têm valor monetário e não podem ser comprados. Não há conta
 - O “Meu dia” passou a mostrar as três falas recentes. Tarefas ditadas recebem prioridade; quando a pessoa diz o horário, a agenda recebe o compromisso e usa esse horário para o lembrete. O aviso depende das notificações estarem ativadas no dispositivo.
 - O agendamento existente foi otimizado em lote. A persistência local acontece primeiro e a sincronização de rede continua em segundo plano; as leituras do cache local são paralelas.
 - Testes novos cobrem academia como tarefa, almoço com valor declarado, finanças sem valor e datas/horários falados, incluindo dia da semana.
+- Validação do ajuste: workflow `MindArt quality` #51 passou em `flutter analyze`, nos 20 testes unitários, checagem dos scripts JavaScript, compilação web/PWA e typecheck da Edge Function. A prévia foi atualizada após a execução bem-sucedida.
